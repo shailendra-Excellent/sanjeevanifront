@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "28293399807",
+    "project_id": "sanjeevni-bc748",
+    "storage_bucket": "sanjeevni-bc748.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:28293399807:android:7ea7caab664b0a54d338ca",
+        "android_client_info": {
+          "package_name": "com.sanjeevni"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBxys6XcfcLWSYUA2_8ZOoZ7e9Ym_Cwiuo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
