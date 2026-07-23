@@ -21,7 +21,7 @@ export const SplashScreen = ({ navigation }) => {
                         DefaultPreference.get('CompCode').then(function (CompCode) {
                             DefaultPreference.get('tokenId').then(function (Token) {
 
-                                global.Fy = '2025'
+                                global.Fy = '2026'
                                       DefaultPreference.get('Rtype').then(function (Rtype) {
                                     if (url == ' ' || url == null) {
                                         // -------------------As Per Client Requirement set IP Adress  

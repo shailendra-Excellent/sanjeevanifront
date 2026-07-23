@@ -317,7 +317,7 @@ const UserRightsPage = ({ route, navigation }) => {
       </View> : null}
     </ScrollView>
     <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginTop: 7 }}>
-      <Text style={{ fontWeight: '700', fontSize: 14, color: 'black', marginBottom: 5 }}>Version  : 1.3.27</Text>
+      <Text style={{ fontWeight: '700', fontSize: 14, color: 'black', marginBottom: 5 }}>Version  : 1.3.28</Text>
       <Text style={{ fontWeight: '700', fontSize: 14, color: 'black', marginBottom: 5 }}>FY  : {global.Fy}</Text>
     </View>
     <Modal visible={showModal} transparent={true} animationType='slide'  >
