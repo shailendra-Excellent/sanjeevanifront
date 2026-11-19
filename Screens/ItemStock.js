@@ -4,6 +4,7 @@ import { ActivityIndicator, View, Text, Image, TextInput, TouchableOpacity, Flat
 import { Checkbox } from 'react-native-paper';
 import DefaultPreference from 'react-native-default-preference';
 import moment from "moment";
+import { filterByText, useDebouncedCallback } from './Components/useDebounce';
 
 
 const RenderComponent = ({ key, item }) => {
@@ -68,6 +69,9 @@ const ItemStock = ({ navigation }) => {
           setIsloading(false)
           setDepartmentData(response.Data)
         }
+      } else {
+        setIsloading(false)
+        alert(response.Message)
       }
     } catch (e) {
       setIsloading(false)
@@ -75,32 +79,16 @@ const ItemStock = ({ navigation }) => {
     }
 
   }
+  // Always filter the full list (not the already-filtered Data) so backspace brings results back
+  const runSearchFilter = useDebouncedCallback((text) => {
+    const source = checkDepartmentWise == true ? DepartmentData : ItemData;
+    setData(filterByText(source, text, item => item.Name));
+    setSpeenar(false);
+  });
   const searchFilter = (text) => {
-    setSpeenar(true)
-    // Check if searched text is not blank
-    if (text) {
-      // Inserted text is not blank
-      // Filter the masterDataSource and update FilteredDataSource
-      const newData = Data.filter(
-        function (item) {
-          // Applying filter for the inserted text in search bar
-          const itemData = item.Name
-            ? item.Name.toUpperCase()
-            : ''.toUpperCase();
-          const textData = text.toUpperCase();
-          return itemData.indexOf(textData) > -1;
-        }
-      );
-      setSpeenar(false);
-      setData(newData)
-      setSearch(text);
-    } else {
-      setData(ItemData);
-      setSpeenar(false)
-      // Inserted text is blank
-      // Update FilteredDataSource with masterDataSource
-      setSearch(text);
-    }
+    setSearch(text);
+    setSpeenar(true);
+    runSearchFilter(text);
   };
   const StockStatusAPI = async (code) => {
     setIsloading(true)
@@ -181,7 +169,7 @@ const ItemStock = ({ navigation }) => {
               searchFilter(text)
             }} />
           <TouchableOpacity onPress={() => {
-            setSearch('')
+            searchFilter('')
             if (checkDepartmentWise == true) {
               setData(DepartmentData)
             } else {

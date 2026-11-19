@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, Image, FlatList, StyleSheet, } from "reac
 import { style } from "./style";
 import DefaultPreference from 'react-native-default-preference';
 import SearchBar from "react-native-dynamic-search-bar";
+import { filterByText, useDebouncedCallback } from './Components/useDebounce';
 import { UIActivityIndicator } from 'react-native-indicators';
 import LinearGradient from 'react-native-linear-gradient';
 import moment from "moment";
@@ -111,25 +112,18 @@ const PickerUserDashBord = ({ navigation, route }) => {
   }
 
   // ---------------------------Search Function call
-  const searchFilterFunction = (text) => {
+  const searchFilterFunction = useDebouncedCallback((text) => {
     if (text) {
-
-      const newData = masterDataSource.filter(
-        function (item) {
-          const itemData = item.AccName
-            ? item.AccName.toUpperCase()
-            : ''.toUpperCase();
-          const textData = text.toUpperCase();
-          return itemData.indexOf(textData) > -1;
-        });
-      setData(newData);
-      setsearch(text);
+      setData(filterByText(masterDataSource, text, item => item.AccName));
     } else {
       // Inserted text is blank
       // Update FilteredDataSource with masterDataSource
       setData(masterDataSource);
-      setsearch(text);
     }
+  });
+  const onSearchChange = (text) => {
+    setsearch(text);
+    searchFilterFunction(text);
   };
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -157,8 +151,8 @@ const PickerUserDashBord = ({ navigation, route }) => {
           backgroundColor="#fff"
           placeholder="Search here.."
           textInputStyle={{ height: 40, margin: 10 }}
-          onChangeText={(text) => { searchFilterFunction(text) }}
-          onSearchPress={(text) => { searchFilterFunction(text) }}
+          onChangeText={onSearchChange}
+          onSearchPress={onSearchChange}
           value={search}
         />
       </View>

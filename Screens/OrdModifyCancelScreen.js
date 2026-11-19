@@ -1,140 +1,148 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
 import {
-  View, Text, FlatList, Image, TouchableOpacity, Modal, TextInput, ScrollView, PermissionsAndroid, Alert, Keyboard,
-  Platform
+  View, Text, FlatList, Image, TouchableOpacity, Modal, TextInput, Alert, Keyboard, StyleSheet, ActivityIndicator
 } from "react-native";
-import LinearGradient from 'react-native-linear-gradient';
 import moment from "moment";
-import { style } from "./style";
 import DefaultPreference from 'react-native-default-preference';
-import { UIActivityIndicator } from 'react-native-indicators';
 import { useIsFocused } from '@react-navigation/native';
 import RNHTMLtoPDF from 'react-native-html-to-pdf';
-import FileViewer from "react-native-file-viewer";
+import { isPermitted, safeFileName, showShareError } from './Components/PdfUtils';
 import Share from 'react-native-share';
-import { ActivityIndicator } from "react-native";
-let num = 2
 let PDFTAmount = 0;
 let PDFTQty = 0;
 
-const RenderFlatlist = ({ item, index }) => {
+const ACCENT = '#A10744';
+// Each stage's cancel qty field and the pending qty it is checked against
+const STAGES = [
+  { field: 'CCQty', pending: 'CQty', label: 'A', name: 'Approved' },
+  { field: 'GCQty', pending: 'GQty', label: 'G', name: 'Godown' },
+  { field: 'PCQty', pending: 'PQty', label: 'P', name: 'Packing' },
+];
+const EMPTY_QTY = {};
+
+// qtyMap is { [ItemCode]: { [Color|Size]: { CCQty, GCQty, PCQty } } } and expanded is { [ItemCode]: { [Color]: true } },
+// so an edit only changes that item's slice and only that item's card re-renders (big orders have 1000+ sizes)
+const sizeKey = (color, size) => `${color.Color}|${size.Size}`;
+const hasQty = (qty) => STAGES.some((stage) => toQty(qty[stage.field]) > 0);
+const toQty = (value) => parseInt(value || '0', 10) || 0;
+const formatNum = (value) => String(Math.round((Number(value) || 0) * 100) / 100);
+
+// Server sends OrderDate as DD/MM/YYYY; plain moment() would read it as MM/DD
+const toApiDate = (date) => {
+  const parsed = moment(date, ['DD/MM/YYYY', 'DD-MM-YYYY', 'DD/MMM/YYYY', 'DD-MMM-YYYY', moment.ISO_8601], true);
+  return parsed.isValid() ? parsed.format('DD/MMM/YYYY') : date;
+};
+
+const QtyInput = memo(({ itemCode, qtyKey, stage, value, pending, onChangeQty }) => {
+  const disabled = !(pending > 0);
+  const invalid = toQty(value) > pending;
+  return (
+    <TextInput
+      style={[styles.qtyInput, disabled && styles.qtyInputDisabled, invalid && styles.qtyInputError]}
+      value={value || ''}
+      editable={!disabled}
+      placeholder={disabled ? '–' : '0'}
+      placeholderTextColor="#A0A0A0"
+      keyboardType="number-pad"
+      maxLength={7}
+      selectTextOnFocus
+      onChangeText={(text) => onChangeQty(itemCode, qtyKey, stage.field, text.replace(/[^0-9]/g, ''))}
+    />
+  );
+});
+
+const SizeRow = memo(({ itemCode, size, qtyKey, qty, onChangeQty }) => {
+  const hasError = STAGES.some((stage) => toQty(qty[stage.field]) > size[stage.pending]);
   return (
     <View>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-        <Text style={[style.salesmantextsty, { fontSize: 14, fontWeight: '600' }]}>{item.ItemName}</Text>
-        <Text style={[style.salesmantextsty, { fontSize: 14, fontWeight: '600', color: 'green' }]}>Total Amount:- {item.Amount}</Text>
-      </View>
-      {item.IColorDT.map((obj, Ind) => {
-        return (
-          <View>
-            <TouchableOpacity onPress={() => {
-              Keyboard.dismiss()
-              if (item.IColorDT[Ind]["showItem"] == false) {
-                item.IColorDT[Ind]["showItem"] = true;
-              } else {
-                item.IColorDT[Ind]["showItem"] = false;
-
-              }
-              setChecked(!checked);
-            }}>
-              <LinearGradient colors={['#A10744', 'red', '#000']} style={{ flexDirection: 'row', justifyContent: 'space-between', height: 50, borderTopWidth: 0.6, borderColor: '#fff' }}>
-                <Text style={[style.headerText, { width: '100%', fontSize: 14 }]} >Color:  {obj.Color} </Text>
-              </LinearGradient>
-            </TouchableOpacity>
-
-            {obj.showItem == true ? obj.SizeDT.map((Item1, ind) => {
-
-              return (
-                <View style={{ width: '100%', alignItems: 'center', justifyContent: 'center', marginBottom: 10, }}>
-                  <View style={{
-                    borderBottomWidth: 1, borderRightWidth: 0.5, justifyContent: 'center',
-                    width: '100%', justifyContent: 'space-evenly'
-                  }}>
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', width: '36%', marginLeft: 5 }}>Size:  {Item1.Size} </Text>
-                    <View style={{ flexDirection: 'row', margin: 5, justifyContent: 'space-between' }}>
-
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', }}>
-                        <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', width: '25%' }}>Stage: </Text>
-                        <View style={{ width: '25%', alignItems: 'center' }}>
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', }}>A</Text>
-                        </View>
-                        <View style={{ width: '25%', alignItems: 'center' }}>
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', }}>G</Text>
-                        </View>
-                        <View style={{ width: '25%', alignItems: 'center' }}>
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', }}>P</Text>
-                        </View>
-                      </View>
-
-                    </View>
-                    <View style={{ flexDirection: 'row', padding: 5, justifyContent: 'space-between', width: '100%' }}>
-                      <Text style={{ fontSize: 14, fontWeight: '500', color: '#A10744' }}>Pending Qty: </Text>
-                      <View style={{ width: '25%', alignItems: 'center' }}>
-                        <Text style={{ fontSize: 14, fontWeight: '300', color: '#000', }}>{Item1.CQty}</Text>
-                      </View>
-                      <View style={{ width: '25%', alignItems: 'center' }}>
-                        <Text style={{ fontSize: 14, fontWeight: '300', color: '#000', }}>{Item1.GQty}</Text>
-                      </View>
-                      <View style={{ width: '25%', alignItems: 'center' }}>
-                        <Text style={{ fontSize: 14, fontWeight: '300', color: '#000', }}>{Item1.PQty}</Text>
-                      </View>
-                    </View>
-                    <View style={{ flexDirection: 'row', padding: 5, justifyContent: 'space-between', width: '100%' }}>
-                      <Text style={{ fontSize: 17, fontWeight: '600', color: 'green', width: '25%' }}>Cancel Qty: </Text>
-                      <View style={{ width: '25%', alignItems: 'center', }}>
-                        <RenderComponent1
-                          item={item}
-                          index={ind}
-                          data={obj.SizeDT}
-                          setData={obj.SizeDT}
-                        />
-                      </View>
-                      <View style={{ width: '25%', alignItems: 'center' }}>
-                        <RenderComponent2
-                          item={item}
-                          index={ind}
-                          data={obj.SizeDT}
-                          setData={obj.SizeDT}
-                        />
-                      </View>
-                      <View style={{ width: '25%', alignItems: 'center' }}>
-                        <RenderComponent3
-                          item={item}
-                          index={ind}
-                          data={obj.SizeDT}
-                          setData={obj.SizeDT}
-                        />
-                      </View>
-
-                    </View>
-                  </View>
-                </View>
-              )
-            }) : null}
-
-
+      <View style={styles.sizeRow}>
+        <Text style={styles.sizeText}>{size.Size}</Text>
+        {STAGES.map((stage) => (
+          <View key={stage.field} style={styles.stageCell}>
+            <Text style={styles.pendingText}>{formatNum(size[stage.pending])}</Text>
+            <QtyInput
+              itemCode={itemCode}
+              qtyKey={qtyKey}
+              stage={stage}
+              value={qty[stage.field]}
+              pending={size[stage.pending]}
+              onChangeQty={onChangeQty}
+            />
           </View>
-        )
-      })}
-
+        ))}
+      </View>
+      {hasError ? <Text style={styles.rowError}>Cancel qty cannot be more than pending qty</Text> : null}
     </View>
+  );
+});
 
-  )
-}
+const ItemCard = memo(({ item, qty, open, onChangeQty, onToggleColor }) => (
+  <View style={styles.itemCard}>
+    <View style={styles.itemHeader}>
+      <Text style={styles.itemName}>{item.ItemName}</Text>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Text style={styles.itemMeta}>Qty {formatNum(item.Qty)}</Text>
+        <Text style={styles.itemAmount}>₹ {formatNum(item.Amount)}</Text>
+      </View>
+    </View>
+    {item.IColorDT.map((color) => {
+      const isOpen = !!open[color.Color];
+      const pending = color.SizeDT.reduce((sum, size) => sum + size.CQty + size.GQty + size.PQty, 0);
+      const edited = color.SizeDT.filter((size) => {
+        const sizeQty = qty[sizeKey(color, size)];
+        return sizeQty && hasQty(sizeQty);
+      }).length;
+      return (
+        <View key={color.Color} style={styles.colorBlock}>
+          <TouchableOpacity activeOpacity={0.7} style={styles.colorHeader} onPress={() => onToggleColor(item.ItemCode, color.Color)}>
+            <Text style={styles.colorText}>Color: {color.Color}</Text>
+            {edited > 0 ? <Text style={styles.badge}>{edited} edited</Text> : null}
+            <Text style={styles.colorPending}>Pending {formatNum(pending)}</Text>
+            <Text style={styles.chevron}>{isOpen ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+          {isOpen ? (
+            <View>
+              <View style={styles.tableHead}>
+                <Text style={[styles.sizeText, styles.tableHeadText]}>Size</Text>
+                {STAGES.map((stage) => (
+                  <Text key={stage.field} style={[styles.stageCell, styles.tableHeadText]}>{stage.label}</Text>
+                ))}
+              </View>
+              {color.SizeDT.map((size) => {
+                const qtyKey = sizeKey(color, size);
+                return (
+                  <SizeRow
+                    key={qtyKey}
+                    itemCode={item.ItemCode}
+                    size={size}
+                    qtyKey={qtyKey}
+                    qty={qty[qtyKey] || EMPTY_QTY}
+                    onChangeQty={onChangeQty}
+                  />
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
+      );
+    })}
+  </View>
+));
 
-const OrdModifyCancel = ({ navigation, route }) => {
+const OrdModifyCancel =({ navigation, route }) => {
 
   const { HeaderInfo, Id, ItemInfo } = route.params;
   const [Data, setData] = useState([])
-  const [editModal, setEditModal] = useState(false);
   const [BaseURL, setBaseURL] = useState('');
-  const [checked, setChecked] = React.useState(false);
   const [CompCode, setCompCode] = useState('');
   const [Fy, setFy] = useState('');
   const [isLoading, setisLoading] = useState(true);
   const isFocused = useIsFocused();
   const [PDFData, setPDFData] = useState([]);
   const [IGRPData,setIGRPData]= useState([])
+  // Cancel qty typed per size, keyed by ItemCode|Color|Size so it survives a reload of Data
+  const [qtyMap, setQtyMap] = useState({});
+  const [expanded, setExpanded] = useState({});
   // ---------------------useEffect 
   useEffect(() => {
 
@@ -192,38 +200,16 @@ const OrdModifyCancel = ({ navigation, route }) => {
       const Response = await res.json();
       setisLoading(false)
       if (Response.Status == 1) {
-        Response.Data.forEach(element => {
-          element.IColorDT.forEach(obj => {
-            obj.showItem = false
-          })
-        });
-        setData(Response.Data)
+        const items = Array.isArray(Response.Data) ? Response.Data : [];
+        setData(items)
+        return items;
       }
     } catch (e) {
       setisLoading(false);
       alert('Catch Error' + e)
     }
+    return null;
   }
-  const isPermitted = async () => {
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          {
-            title: 'External Storage Write Permission',
-            message: 'App needs access to Storage data',
-          },
-        );
-        console.log(  'Permision',  PermissionsAndroid.RESULTS.GRANTED)
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } catch (err) {
-        alert('Write permission err', err);
-        return false;
-      }
-    } else {
-      return true;
-    }
-  };
   const CreatePDF = async () => {
     // setisLoading(true)
 
@@ -297,7 +283,7 @@ const OrdModifyCancel = ({ navigation, route }) => {
                   return (
                     `${ItemParamDT.Size + '/' + ItemParamDT.CQty}`
                   )
-                })
+                }).join(', ')
 
                 }
 
@@ -346,7 +332,7 @@ ${IGRPData.map((IGRPObj)=>{
 <td style="border: 1px solid black; text-align:right; font-size:12px;padding:5px">${IGRPObj.Qty}</td>
 </tr>`
  ) 
-})}
+}).join('')}
 
 </table>
 <table id= ${new Date()}  style="width:207px;border-collapse: collapse;">
@@ -367,12 +353,19 @@ ${IGRPData.map((IGRPObj)=>{
       let options = {
         //Content to print
         html: html,
-        fileName: HeaderInfo.SAccName,
+        fileName: safeFileName(HeaderInfo.SAccName),
         
         //File directory
         directory: 'docs',
       };
-      let file = await RNHTMLtoPDF.convert(options);
+      let file;
+      try {
+        file = await RNHTMLtoPDF.convert(options);
+      } catch (err) {
+        setisLoading(false);
+        Alert.alert('PDF Error', err.message || 'Failed to create PDF');
+        return;
+      }
       setisLoading(false)
       Share.open({
         title: "Order PDF",
@@ -385,412 +378,296 @@ ${IGRPData.map((IGRPObj)=>{
       .catch((err) => {
       //   navigation.goBack()
       setisLoading(false);
-       Alert.alert(err.message);
+       showShareError(err);
       });
       // openFile(file.filePath);
     }
    
   };
 
-  const openFile = filepath => {
-    const path = filepath;
-    FileViewer.open(path) // absolute-path-to-my-local-file.
-      .then(() => {
-        HeaderDT = [],
-          Data = []
-        // success
-      })
-      .catch(error => {
-        // error
-        // alert('error'+ error);
-      });
-  };
-  const renderItem = ({ item, index }) => {
+  const onChangeQty = useCallback((itemCode, key, field, value) => {
+    setQtyMap((prev) => {
+      const itemQty = prev[itemCode] || {};
+      return { ...prev, [itemCode]: { ...itemQty, [key]: { ...itemQty[key], [field]: value } } };
+    });
+  }, []);
 
-    return (
-      <View>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Text style={[style.salesmantextsty, { fontSize: 14, fontWeight: '600' }]}>{item.ItemName}</Text>
-          <Text style={[style.salesmantextsty, { fontSize: 14, fontWeight: '600', color: 'green' }]}>Total Amount:- {item.Amount}</Text>
-        </View>
-        {item.IColorDT.map((obj, Ind) => {
-          return (
-            <View>
-              <TouchableOpacity onPress={() => {
-                Keyboard.dismiss()
-                if (item.IColorDT[Ind]["showItem"] == false) {
-                  item.IColorDT[Ind]["showItem"] = true;
-                } else {
-                  item.IColorDT[Ind]["showItem"] = false;
+  const toggleColor = useCallback((itemCode, color) => {
+    Keyboard.dismiss();
+    setExpanded((prev) => {
+      const itemOpen = prev[itemCode] || {};
+      return { ...prev, [itemCode]: { ...itemOpen, [color]: !itemOpen[color] } };
+    });
+  }, []);
 
-                }
-                setChecked(!checked);
-              }}>
-                <LinearGradient colors={['#A10744', 'red', '#000']} style={{ flexDirection: 'row', justifyContent: 'space-between', height: 50, borderTopWidth: 0.6, borderColor: '#fff' }}>
-                  <Text style={[style.headerText, { width: '100%', fontSize: 14 }]} >Color:  {obj.Color} </Text>
-                </LinearGradient>
-              </TouchableOpacity>
+  // Sizes where at least one cancel qty has been entered
+  // Live totals from the pending item view (match HeaderInfo totals), so they update after a save
+  const totals = useMemo(() => {
+    if (!PDFData || PDFData.length === 0) {
+      return { qty: HeaderInfo.TotalQty, amount: HeaderInfo.TotalAmount };
+    }
+    let qty = 0;
+    let amount = 0;
+    PDFData.forEach((item) => {
+      qty += item.Qty;
+      item.IColorDT.forEach((color) => { amount += item.Amount * color.Qty; });
+    });
+    return { qty, amount };
+  }, [PDFData]);
 
-              {obj.showItem == true ? obj.SizeDT.map((Item1, ind) => {
+  const editedCount = useMemo(
+    () => Object.values(qtyMap).reduce((count, itemQty) => count + Object.values(itemQty).filter(hasQty).length, 0),
+    [qtyMap]
+  );
 
-                return (
-                  <View style={{ width: '100%', alignItems: 'center', justifyContent: 'center', marginBottom: 10, }}>
-                    <View style={{
-                      borderBottomWidth: 1, borderRightWidth: 0.5, justifyContent: 'center',
-                      width: '100%', justifyContent: 'space-evenly'
-                    }}>
-                      <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', width: '36%', marginLeft: 5 }}>Size:  {Item1.Size} </Text>
-                      <View style={{ flexDirection: 'row', margin: 5, justifyContent: 'space-between' }}>
-
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', }}>
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', width: '25%' }}>Stage: </Text>
-                          <View style={{ width: '25%', alignItems: 'center' }}>
-                            <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', }}>A</Text>
-                          </View>
-                          <View style={{ width: '25%', alignItems: 'center' }}>
-                            <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', }}>G</Text>
-                          </View>
-                          <View style={{ width: '25%', alignItems: 'center' }}>
-                            <Text style={{ fontSize: 14, fontWeight: '600', color: '#A10744', }}>P</Text>
-                          </View>
-                        </View>
-
-                      </View>
-                      <View style={{ flexDirection: 'row', padding: 5, justifyContent: 'space-between', width: '100%' }}>
-                        <Text style={{ fontSize: 14, fontWeight: '500', color: '#A10744' }}>Pending Qty: </Text>
-                        <View style={{ width: '25%', alignItems: 'center' }}>
-                          <Text style={{ fontSize: 14, fontWeight: '300', color: '#000', }}>{Item1.CQty}</Text>
-                        </View>
-                        <View style={{ width: '25%', alignItems: 'center' }}>
-                          <Text style={{ fontSize: 14, fontWeight: '300', color: '#000', }}>{Item1.GQty}</Text>
-                        </View>
-                        <View style={{ width: '25%', alignItems: 'center' }}>
-                          <Text style={{ fontSize: 14, fontWeight: '300', color: '#000', }}>{Item1.PQty}</Text>
-                        </View>
-                      </View>
-                      <View style={{ flexDirection: 'row', padding: 5, justifyContent: 'space-between', width: '100%' }}>
-                        <Text style={{ fontSize: 17, fontWeight: '600', color: 'green', width: '25%' }}>Cancel Qty: </Text>
-                        <View style={{ width: '25%', alignItems: 'center', }}>
-                          <RenderComponent1
-                            item={item}
-                            index={ind}
-                            data={obj.SizeDT}
-                            setData={obj.SizeDT}
-                          />
-                        </View>
-                        <View style={{ width: '25%', alignItems: 'center' }}>
-                          <RenderComponent2
-                            item={item}
-                            index={ind}
-                            data={obj.SizeDT}
-                            setData={obj.SizeDT}
-                          />
-                        </View>
-                        <View style={{ width: '25%', alignItems: 'center' }}>
-                          <RenderComponent3
-                            item={item}
-                            index={ind}
-                            data={obj.SizeDT}
-                            setData={obj.SizeDT}
-                          />
-                        </View>
-
-                      </View>
-                    </View>
-                  </View>
-                )
-              }) : null}
-
-
-            </View>
-          )
-        })}
-
-      </View>
-
-    )
-  }
-
-  const EditPostAPI = async () => {
-
-    let obj2 = {};
-    let ItemData = [];
-    let ItemDT = []
-    //   Data.map((Item)=>{
-    //  Item.IColorDT.map((item2)=>{
-    //    item2.SizeDT.map((item3)=>{
-
-    //     if(item3.CCQty !=0 || (item3.GCQty !=0 || item3.PCQty !=0)){
-    //       if(item3.CCQty >item3.CQty || (item3.GCQty >item3.GQty || item3.PCQty >item3.PQty)){
-    //         alert('Please Enter Qty is leass then Pending Qty !!')
-    //       }else{
-    //         console.log('Itemmmmmmmmmmmm')
-    //         console.log(Item)
-    //         obj2={
-    //           Color:item2.Color,
-    //           Size:item3.Size,
-    //           CCQty:item3.CCQty,
-    //           GCQty:item3.GCQty,
-    //           PCQty:item3.PCQty,
-    //         }
-    //         ItemParamDT.push(obj2)
-
-    //       }
-    //     }else{
-
-    //     }
-
-    //    })
-    //  })
-    //  obj={
-    //   ItemCode:Item.ItemCode,
-    //   ItemName:Item.ItemName,
-    //   ItemParamDT : ItemParamDT
-    // }
-    //   })
-    Data.map((item) => {
-      let obj = {};
-      let ItemParamDT = [];
-      item.IColorDT.map((itemColor) => {
-
-        itemColor.SizeDT.map((ItemSize) => {
-          if (ItemSize.CCQty != 0 || ItemSize.GCQty != 0 || ItemSize.PCQty != 0) {
-            if (parseInt(ItemSize.CCQty) > ItemSize.CQty || (parseInt(ItemSize.GCQty) > ItemSize.GQty || parseInt(ItemSize.PCQty) > ItemSize.PQty)) {
-              // alert('Please Enter Qty is leass then Pending Qty !!')
-            } else {
-              let obj1 = {
-                Color: itemColor.Color,
-                Size: ItemSize.Size,
-                CCQty: ItemSize.CCQty,
-                GCQty: ItemSize.GCQty,
-                PCQty: ItemSize.PCQty
-              }
-              ItemParamDT.push(obj1)
+  // Builds the request from the entered qty; every over-pending entry is reported instead of being dropped
+  const buildItemDT = () => {
+    const ItemDT = [];
+    const errors = [];
+    const errorColors = {};
+    let totalCancel = 0;
+    Data.forEach((item) => {
+      const ItemParamDT = [];
+      item.IColorDT.forEach((color) => {
+        color.SizeDT.forEach((size) => {
+          const qty = (qtyMap[item.ItemCode] || EMPTY_QTY)[sizeKey(color, size)];
+          if (!qty) return;
+          const row = { Color: color.Color, Size: size.Size };
+          let entered = false;
+          STAGES.forEach((stage) => {
+            const value = toQty(qty[stage.field]);
+            row[stage.field] = value;
+            if (value > 0) entered = true;
+            if (value > size[stage.pending]) {
+              errors.push(`${item.ItemName} | Color ${color.Color} | Size ${size.Size}: ${stage.name} ${value} > pending ${formatNum(size[stage.pending])}`);
+              errorColors[item.ItemCode] = { ...errorColors[item.ItemCode], [color.Color]: true };
             }
-
-          } else {
-            // alert('Please enter Qty first...');
+          });
+          if (entered) {
+            ItemParamDT.push(row);
+            totalCancel += row.CCQty + row.GCQty + row.PCQty;
           }
-
-        })
-
+        });
       });
       if (ItemParamDT.length > 0) {
-        obj = {
-          ItemCode: item.ItemCode,
-          ItemName: item.ItemName,
-          ItemParamDT: ItemParamDT
-        }
-        ItemDT.push(obj);
-        return;
-      } else {
-        // alert('Please Enter Valide Qty..');
-        return;
+        ItemDT.push({ ItemCode: item.ItemCode, ItemName: item.ItemName, ItemParamDT });
       }
+    });
+    return { ItemDT, errors, errorColors, totalCancel };
+  };
 
-    })
-    //  console.log(JSON.stringify(ItemDT));
-    let JSONData = {
+  const onSavePress = () => {
+    Keyboard.dismiss();
+    const { ItemDT, errors, errorColors, totalCancel } = buildItemDT();
+    if (errors.length > 0) {
+      setExpanded((prev) => {
+        const next = { ...prev };
+        Object.keys(errorColors).forEach((itemCode) => {
+          next[itemCode] = { ...prev[itemCode], ...errorColors[itemCode] };
+        });
+        return next;
+      });
+      const more = errors.length > 5 ? `\n...and ${errors.length - 5} more` : '';
+      Alert.alert('Cancel qty is more than pending qty', errors.slice(0, 5).join('\n') + more);
+      return;
+    }
+    if (ItemDT.length === 0) {
+      Alert.alert('Nothing to save', 'Please enter cancel qty first.');
+      return;
+    }
+    Alert.alert('Save changes?', `Cancel ${totalCancel} qty in ${editedCount} size(s) of this order?`, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes', onPress: () => EditPostAPI(ItemDT) },
+    ]);
+  };
+
+  const EditPostAPI = async (ItemDT) => {
+    const JSONData = {
       VchCode: HeaderInfo.VchCode,
       SOrderID: HeaderInfo.OrderNo,
-      SOrderDate: moment(HeaderInfo.OrderDate).format('DD/MMM/YYYY'),
+      SOrderDate: toApiDate(HeaderInfo.OrderDate),
       ItemDT: ItemDT
-    }
-    // console.log(JSON.stringify(JSONData))
-    //  console.log(obj)
-    // let ItemDT=[];
-
-    //  if(JSON.stringify(obj) === '{}'){
-    //   alert('Please enter Qty first...')
-    //  }else{
-    //   ItemDT.push(obj);   
-    //  
-    //   // console.log(JSON.stringify(obj))
-    //   // console.log(JSON.stringify(JSONData));
-
-
-    if (ItemDT.length > 0) {
-      try {
-        const response = await fetch(BaseURL + '/api/Values/SaveConfirmedOrderCancel?CompCode=' + CompCode + '&FY=' + Fy, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(JSONData)
-        });
-        const json = await response.json()
-        setisLoading(false);
-        if (json.Status == 1) {
-          navigation.goBack();
+    };
+    setisLoading(true);
+    try {
+      const response = await fetch(BaseURL + '/api/Values/SaveConfirmedOrderCancel?CompCode=' + CompCode + '&FY=' + Fy, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(JSONData)
+      });
+      const json = await response.json();
+      if (json.Status == 1) {
+        setQtyMap({});
+        // Reload the order; go back only when nothing is left pending, otherwise stay to keep editing
+        const [items] = await Promise.all([
+          GetOrdInfoAPI(BaseURL, CompCode, Fy, HeaderInfo.VchCode),
+          CallPDFAPI(BaseURL, CompCode, Fy, HeaderInfo.VchCode),
+        ]);
+        const hasPending = (items || []).some((item) => item.IColorDT.some((color) =>
+          color.SizeDT.some((size) => STAGES.some((stage) => size[stage.pending] > 0))));
+        if (items && !hasPending) {
+          Alert.alert('Saved', 'Order qty updated. No pending items left in this order.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+        } else {
+          Alert.alert('Saved', 'Order qty updated successfully.');
         }
-        else {
-          alert(json.Msg)
-        }
-      } catch (e) {
+      } else {
         setisLoading(false);
-        alert('Catch Error' + e)
+        Alert.alert('Error', json.Msg || json.Message || 'Could not save the order.');
       }
-    } else {
-      alert('Please Enter Qty First')
+    } catch (e) {
+      setisLoading(false);
+      Alert.alert('Error', 'Could not save the order.\n' + e);
     }
-
-
-  }
-
-
-  // -------------------------Render Component
-  const RenderComponent1 = props => {
-    return (
-      <TextInput
-        key={props.index}
-        style={style.EditInputSty}
-        value={props.data[props.index].CCQty}
-        keyboardType="numeric"
-        maxLength={7}
-        onChangeText={(text) => {
-          let newArray = [...props.data];
-          if (parseInt(text) > newArray[props.index].CQty) {
-            Alert.alert('Alert', 'Please Enter Qty is leass then Pending Qty', [
-              {
-                text: 'OK',
-                onPress: () => newArray[props.index].CCQty = '0',
-              }
-
-            ]);
-
-            // alert('Please Enter Qty is leass then Pending Qty')
-            // newArray[props.index].CCQty=0
-            // text=''
-            // newArray[props.index].CCQty= '0'
-          } else {
-            newArray[props.index].CCQty = text;
-          }
-        }}
-      />
-    );
   };
-  const RenderComponent2 = props => {
-    return (
-      <TextInput
-        key={props.index}
-        style={style.EditInputSty}
-        value={props.data[props.index].GCQty}
-        keyboardType="numeric"
-        maxLength={7}
-        onChangeText={(text) => {
-          let newArray = [...props.data];
-          newArray[props.index].GCQty = text;
 
-        }}
-      />
-    );
-  };
-  const RenderComponent3 = props => {
-    return (
-      <TextInput
-        key={props.index}
-        style={style.EditInputSty}
-        value={props.data[props.index].PCQty}
-        keyboardType="numeric"
-        maxLength={7}
-        onChangeText={(text) => {
-          let newArray = [...props.data];
-          newArray[props.index].PCQty = text;
-
-        }}
-      />
-    );
-  };
+  const renderItem = useCallback(({ item }) => (
+    <ItemCard
+      item={item}
+      qty={qtyMap[item.ItemCode] || EMPTY_QTY}
+      open={expanded[item.ItemCode] || EMPTY_QTY}
+      onChangeQty={onChangeQty}
+      onToggleColor={toggleColor}
+    />
+  ), [qtyMap, expanded, onChangeQty, toggleColor]);
 
   return (
-    <View style={{ flex: 1 }}>
-      <View style={{ backgroundColor: '#000' }}>
-        <View style={{ padding: 5 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Text style={style.headerText}>Order Id:   {HeaderInfo.OrderNo}</Text>
-            <Text style={style.headerText}>OrderDate:  {HeaderInfo.OrderDate}</Text>
+    <View style={styles.screen}>
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.orderNo}>{HeaderInfo.OrderNo}</Text>
+            <Text style={styles.orderDate}>{HeaderInfo.OrderDate}</Text>
           </View>
-          <Text style={style.headerText}>Party:       {HeaderInfo.AccName}</Text>
-          <Text style={style.headerText}>Ship To:   {HeaderInfo.SAccName}</Text>
-          <Text style={style.headerText}>Picker:   {HeaderInfo.Picker}</Text>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <View>
-              <Text style={style.headerText}>Total Qty:  {HeaderInfo.TotalQty}</Text>
-              <Text style={style.headerText}>Total Amount:  {HeaderInfo.TotalAmount}</Text>
-
-            </View>
-            <TouchableOpacity
-              style={{ margin: 10 }}
-              onPress={() => {
-                DefaultPreference.set('Partyname', HeaderInfo.AccName);
-                DefaultPreference.set('PCode', HeaderInfo.AccCode.toString());
-                DefaultPreference.set('shippingPCode', HeaderInfo.SAccCode.toString());
-                DefaultPreference.set('ShippingParty', HeaderInfo.SAccName)
-                DefaultPreference.set('VchCode', HeaderInfo.VchCode.toString());
-                // console.log(HeaderInfo.VchCode.toString())
-
-                navigation.navigate('ScanItemScreen', { BCN: undefined, Id: 3, OType: 2 });
-              }}
-            >
-              <Image source={{ uri: 'https://cdn-icons-png.flaticon.com/128/1341/1341632.png' }} style={{ height: 30, width: 30, tintColor: '#fff' }} />
-            </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.addBtn}
+            onPress={() => {
+              DefaultPreference.set('Partyname', HeaderInfo.AccName);
+              DefaultPreference.set('PCode', HeaderInfo.AccCode.toString());
+              DefaultPreference.set('shippingPCode', HeaderInfo.SAccCode.toString());
+              DefaultPreference.set('ShippingParty', HeaderInfo.SAccName)
+              DefaultPreference.set('VchCode', HeaderInfo.VchCode.toString());
+              navigation.navigate('ScanItemScreen', { BCN: undefined, Id: 3, OType: 2 });
+            }}
+          >
+            <Image source={{ uri: 'https://cdn-icons-png.flaticon.com/128/1341/1341632.png' }} style={{ height: 18, width: 18, tintColor: '#fff' }} />
+            <Text style={styles.addBtnText}>Add Item</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Party</Text>
+          <Text style={styles.infoValue}>{HeaderInfo.AccName}</Text>
+        </View>
+        {HeaderInfo.SAccName && HeaderInfo.SAccName !== HeaderInfo.AccName ? (
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Ship To</Text>
+            <Text style={styles.infoValue}>{HeaderInfo.SAccName}</Text>
+          </View>
+        ) : null}
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Picker</Text>
+          <Text style={styles.infoValue}>{HeaderInfo.Picker || '-'}</Text>
+        </View>
+        <View style={styles.statsRow}>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Total Qty</Text>
+            <Text style={styles.statValue}>{formatNum(totals.qty)}</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Total Amount</Text>
+            <Text style={styles.statValue}>₹ {formatNum(totals.amount)}</Text>
           </View>
         </View>
       </View>
-      <ScrollView style={{}} >
-        <FlatList data={Data}
-          keyboardShouldPersistTaps={'handled'}
-          //  renderItem={({item,index})=>{
-          //   <RenderFlatlist item={item} index={index} />
-          //  }
 
-          // renderItem
-          // }
-          renderItem={renderItem}
-          keyExtractor={(item, Index) => {
-            Index.toString()
-          }}
-        />
+      <View style={styles.legend}>
+        <Text style={styles.legendText}>Enter cancel qty below pending qty</Text>
+        <Text style={styles.legendText}>A: Approved   G: Godown   P: Packing</Text>
+      </View>
 
-      </ScrollView>
-      <View style={{ flexDirection: 'row', }}>
+      <FlatList
+        data={Data}
+        keyboardShouldPersistTaps={'handled'}
+        renderItem={renderItem}
+        keyExtractor={(item, index) => `${item.ItemCode}-${index}`}
+        initialNumToRender={8}
+        maxToRenderPerBatch={6}
+        windowSize={9}
+        contentContainerStyle={{ padding: 10, paddingBottom: 20 }}
+        ListEmptyComponent={isLoading ? null : <Text style={styles.emptyText}>No pending items in this order</Text>}
+      />
+
+      <View style={styles.footer}>
         <TouchableOpacity
-          onPress={() => {
-            Alert.alert('Alert ', 'Do You Want To Edit Order Qty..', [
-
-
-              { text: 'No', onPress: () => console.log('OK Pressed') },
-              {
-                text: 'Yes', onPress: (() => { EditPostAPI() }),
-              },
-            ]);
-
-            // EditPostAPI()
-          }}
-          style={{ justifyContent: 'center', width: '50%', backgroundColor: '#000', alignItems: 'center', borderWidth: 1, borderColor: '#fff', padding: 10 }} >
-          <Text style={{ color: '#fff' }}>
-            Edit
-          </Text>
+          activeOpacity={0.8}
+          onPress={onSavePress}
+          style={[styles.saveBtn, editedCount === 0 && { opacity: 0.6 }]}
+        >
+          <Text style={styles.saveBtnText}>{editedCount > 0 ? `Save Changes (${editedCount})` : 'Save Changes'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={async() => {
-          await  CreatePDF()
-          }}
-          style={{ justifyContent: 'center', width: '50%', backgroundColor: '#000', alignItems: 'center', borderWidth: 1, borderColor: '#fff', padding: 10 }} >
-          <Image source={{ uri: 'https://cdn-icons-png.flaticon.com/128/1358/1358023.png' }} style={{ height: 30, width: 30, tintColor: '#fff' }} />
+        <TouchableOpacity activeOpacity={0.8} onPress={CreatePDF} style={styles.pdfBtn}>
+          <Image source={{ uri: 'https://cdn-icons-png.flaticon.com/128/1358/1358023.png' }} style={{ height: 22, width: 22, tintColor: '#fff' }} />
+          <Text style={styles.pdfBtnText}>PDF</Text>
         </TouchableOpacity>
       </View>
-      <LinearGradient colors={['#0E070A', '#2A2829', '#837F81']} style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 0.6, borderColor: '#fff' }}>
-        <Text style={style.headerText} >A  :- Approved</Text>
-        <Text style={style.headerText} >G  :- Godown</Text>
-        <Text style={style.headerText} >P  :- Packing</Text>
-      </LinearGradient>
-      <Modal visible={isLoading} >
-        <View style={style.content} >
 
-          <ActivityIndicator size={35} />
-          <Text>Please Wait...</Text>
+      <Modal visible={isLoading} transparent>
+        <View style={styles.loaderBackdrop}>
+          <View style={styles.loaderBox}>
+            <ActivityIndicator size={35} color={ACCENT} />
+            <Text style={{ marginTop: 8, color: '#000' }}>Please Wait...</Text>
+          </View>
         </View>
       </Modal>
     </View>
   )
 }
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: '#F2F2F4' },
+  header: { backgroundColor: '#000', paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12 },
+  headerTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  orderNo: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  orderDate: { color: '#BDBDBD', fontSize: 13, marginTop: 2 },
+  addBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: ACCENT, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  addBtnText: { color: '#fff', fontWeight: '700', marginLeft: 6 },
+  infoRow: { flexDirection: 'row', marginTop: 3 },
+  infoLabel: { color: '#9E9E9E', width: 62, fontSize: 13 },
+  infoValue: { color: '#fff', flex: 1, fontSize: 14, fontWeight: '600' },
+  statsRow: { flexDirection: 'row', marginTop: 10 },
+  statBox: { flex: 1, backgroundColor: '#1E1E1E', borderRadius: 8, padding: 8, marginRight: 6 },
+  statLabel: { color: '#9E9E9E', fontSize: 12 },
+  statValue: { color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 2 },
+  legend: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#E4E4E8' },
+  legendText: { fontSize: 12, color: '#444' },
+  itemCard: { backgroundColor: '#fff', borderRadius: 10, marginBottom: 10, overflow: 'hidden', elevation: 2 },
+  itemHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10 },
+  itemName: { flex: 1, fontSize: 15, fontWeight: '700', color: '#000', marginRight: 8 },
+  itemMeta: { fontSize: 12, color: '#666' },
+  itemAmount: { fontSize: 14, fontWeight: '700', color: 'green' },
+  colorBlock: { borderTopWidth: 1, borderTopColor: '#EEE' },
+  colorHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 12, backgroundColor: '#FBF3F6' },
+  colorText: { flex: 1, fontSize: 14, fontWeight: '700', color: ACCENT },
+  badge: { backgroundColor: ACCENT, color: '#fff', fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginRight: 8, overflow: 'hidden' },
+  colorPending: { fontSize: 12, color: '#555', marginRight: 10 },
+  chevron: { fontSize: 12, color: ACCENT },
+  tableHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#F5F5F5' },
+  tableHeadText: { fontSize: 13, fontWeight: '700', color: '#333', textAlign: 'center' },
+  sizeRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
+  sizeText: { width: 60, fontSize: 14, fontWeight: '700', color: '#000' },
+  stageCell: { flex: 1, alignItems: 'center' },
+  pendingText: { fontSize: 11, color: '#777', marginBottom: 3 },
+  qtyInput: { width: 64, height: 38, borderWidth: 1, borderColor: '#BDBDBD', borderRadius: 6, textAlign: 'center', fontSize: 15, color: '#000', paddingVertical: 0, backgroundColor: '#fff' },
+  qtyInputDisabled: { backgroundColor: '#EEEEEE', borderColor: '#E0E0E0' },
+  qtyInputError: { borderColor: 'red', borderWidth: 2, backgroundColor: '#FFEBEE' },
+  rowError: { color: 'red', fontSize: 12, paddingHorizontal: 10, paddingBottom: 6 },
+  emptyText: { textAlign: 'center', color: '#777', marginTop: 40 },
+  footer: { flexDirection: 'row', padding: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E0E0E0' },
+  saveBtn: { flex: 1, backgroundColor: ACCENT, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingVertical: 13 },
+  saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  pdfBtn: { flexDirection: 'row', backgroundColor: '#000', borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, marginLeft: 10 },
+  pdfBtnText: { color: '#fff', fontWeight: '700', marginLeft: 6 },
+  loaderBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' },
+  loaderBox: { backgroundColor: '#fff', padding: 20, borderRadius: 10, alignItems: 'center' },
+});
+
 export default OrdModifyCancel;

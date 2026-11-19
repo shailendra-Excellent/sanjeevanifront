@@ -1,0 +1,18 @@
+diff --git a/node_modules/react-native-share/android/src/main/java/cl/json/social/TargetChosenReceiver.java b/node_modules/react-native-share/android/src/main/java/cl/json/social/TargetChosenReceiver.java
+--- a/node_modules/react-native-share/android/src/main/java/cl/json/social/TargetChosenReceiver.java
++++ b/node_modules/react-native-share/android/src/main/java/cl/json/social/TargetChosenReceiver.java
+@@ -46,7 +46,13 @@ public class TargetChosenReceiver extends BroadcastReceiver {
+                 context.unregisterReceiver(sLastRegisteredReceiver);
+             }
+             sLastRegisteredReceiver = new TargetChosenReceiver();
+-            context.registerReceiver(sLastRegisteredReceiver, new IntentFilter(sTargetChosenReceiveAction));
++            // Android 14 (targetSdk 34) requires an export flag for runtime-registered receivers.
++            // EXPORTED: the chooser delivers the result through our PendingIntent broadcast.
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++                context.registerReceiver(sLastRegisteredReceiver, new IntentFilter(sTargetChosenReceiveAction), Context.RECEIVER_EXPORTED);
++            } else {
++                context.registerReceiver(sLastRegisteredReceiver, new IntentFilter(sTargetChosenReceiveAction));
++            }
+         }
+ 
+         Intent intent = new Intent(sTargetChosenReceiveAction);

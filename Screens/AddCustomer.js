@@ -137,13 +137,13 @@ const AddCustomer=({navigation})=>{
         </TouchableOpacity>
         </View>
         <View style={{padding:5}}>
-        <CustomSearch data={masterDataSource} placeholder={'Search Shipping Party Here...'}setvalue={(item)=>{
+        <CustomSearch wildSearch data={masterDataSource} placeholder={'Search Shipping Party Here...'}setvalue={(item)=>{
        setCustCode(item.Code)
           setCustomerName(item.Name);
          }}  setcrosValue={()=>{
           setCustCode(0)
          }} setitemDetails={()=>{}} /> 
-          <CustomSearch data={masterDataSource} placeholder={'Search Billing Party Here...'}setvalue={(item)=>{
+          <CustomSearch wildSearch data={masterDataSource} placeholder={'Search Billing Party Here...'}setvalue={(item)=>{
        setPartyName(item.Name);
        setPcode(item.Code);
        setexistingParty(item.BAccName);

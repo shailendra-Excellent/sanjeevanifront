@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import DefaultPreference from "react-native-default-preference";
 import RNHTMLtoPDF from "react-native-html-to-pdf";
+import { isPermitted, safeFileName } from "../Components/PdfUtils";
 import FileViewer from "react-native-file-viewer";
 import RenderItem from "./RenderItem";
 import RNBounceable from "@freakycoder/react-native-bounceable";
@@ -26,6 +27,8 @@ const PendingOrderReport = ({ route }) => {
   const { RType, headerName } = route.params;
 
   const [ListData, setListData] = useState([]);
+  // Tab (IType) the current ListData was loaded for, so rows follow the data rather than the button just tapped
+  const [ListType, setListType] = useState(2);
   const [Loading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [DepartmentCode, setDepartmentCode] = useState(0);
@@ -45,30 +48,23 @@ const PendingOrderReport = ({ route }) => {
     moment(new Date()).format("DD-MMM-YYYY")
   );
   const [ShowItemSearch, setShowItemSearch] = useState(false);
+  // Bumped on department change so the item search box starts empty for the new department
+  const [ItemSearchKey, setItemSearchKey] = useState(0);
 
-  // Ask for write permission (Android)
-  const isPermitted = async () => {
-    if (Platform.OS === "android") {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          {
-            title: "External Storage Write Permission",
-            message: "App needs access to Storage to save PDF files",
-            buttonNeutral: "Ask Me Later",
-            buttonNegative: "Cancel",
-            buttonPositive: "OK",
-          }
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } catch (err) {
-        console.warn("Write permission error:", err);
-        return false;
-      }
-    } else {
-      return true;
-    }
+  const resetItemSearch = () => {
+    setShowItemSearch(false);
+    setItemData([]);
+    setItemSearchKey((key) => key + 1);
+    setDepartmentCode(0);
+    setListData([]);
   };
+
+  // Tab buttons / refresh: the party report can only load once an item is picked
+  const loadTab = (type) => {
+    if (RType === 2 && !DepartmentCode) return Promise.resolve();
+    return CallAPI(BaseURL, CompCode, Fy, type, DepartmentCode, RType);
+  };
+
 
   // load preferences and initial department list
   useEffect(() => {
@@ -141,14 +137,32 @@ const PendingOrderReport = ({ route }) => {
   const CallAPI = async (baseUrl, compCode, fy, type, IgrpCode, Rtype) => {
     setIsLoading(true);
     try {
-      const url =
+      const getUrl = (itype) =>
         baseUrl +
-        `/api/Values/GetCustUnapprovedOrder?CompCode=${compCode}&FY=${fy}&IType=${type}&IgrpCode=${IgrpCode}&RType=${Rtype}&SDate=${FromDate}&EDate=${ToDate}`;
-      console.log("Requesting:", url);
-      const res = await fetch(url);
-      const Response = await res.json();
+        `/api/Values/GetCustUnapprovedOrder?CompCode=${compCode}&FY=${fy}&IType=${itype}&IgrpCode=${IgrpCode}&RType=${Rtype}&SDate=${FromDate}&EDate=${ToDate}`;
+      let Response;
+      if (Rtype === 2 && type === 3) {
+        // Party report "Both": the server merges each party into one row without Order No / Picker, so the
+        // per-user header rules can't be applied. Load Approved and Un-Approved separately and tag each row.
+        const [approved, unapproved] = await Promise.all(
+          [2, 1].map((itype) => fetch(getUrl(itype)).then((res) => res.json()))
+        );
+        const tag = (resp, itype) =>
+          resp.Status === 1 && Array.isArray(resp.Data) ? resp.Data.map((row) => ({ ...row, RowIType: itype })) : [];
+        const rows = [...tag(approved, 2), ...tag(unapproved, 1)];
+        rows.sort((a, b) => (a.PartyName || "").localeCompare(b.PartyName || "") || b.RowIType - a.RowIType);
+        Response = approved.Status === 1 || unapproved.Status === 1
+          ? { Status: 1, Data: rows }
+          : approved;
+      } else {
+        const url = getUrl(type);
+        console.log("Requesting:", url);
+        const res = await fetch(url);
+        Response = await res.json();
+      }
       setIsLoading(false);
       if (Response.Status === 1) {
+        setListType(type);
         setListData(Array.isArray(Response.Data) ? Response.Data : []);
       } else {
         Alert.alert("Info", Response.Message || "No data found");
@@ -195,7 +209,7 @@ ${ obj.IColorDT.map((item)=>{
       return(
         `${ItemParamDT.Size +'/'+ItemParamDT.CQty}`
       )
-     })
+     }).join(', ')
 
   }
   
@@ -203,7 +217,7 @@ ${ obj.IColorDT.map((item)=>{
     </tr>`
   
   )
- })
+ }).join('')
 
 }
 `
@@ -224,40 +238,31 @@ html += `</table>
         let options = {
           //Content to print
           html: html,
-          fileName: toString(CDate).pdf,
+          fileName: safeFileName(CDate),
           //File directory
           directory: 'docs',
         };
-        let file = await RNHTMLtoPDF.convert(options);
-        let filepath=file.filePath
+        let file;
+        try {
+          file = await RNHTMLtoPDF.convert(options);
+        } catch (err) {
+          Alert.alert('PDF Error', err.message || 'Failed to create PDF');
+          return;
+        }
        openFile(file.filePath)
-        .then((res) => {
-          navigation.goBack()
-        })
-        .catch((err) => {
-          navigation.goBack()
-        //  alert( 'Catch Error'+err);
-        });
       }
     };
     const openFile = filepath => {
-      const path = filepath;
-      FileViewer.open(path) // absolute-path-to-my-local-file.
-        .then(() => {
-          HeaderDT=[],
-          Data=[]
-          // success
-        })
+      FileViewer.open(filepath) // absolute-path-to-my-local-file.
         .catch(error => {
-          // error
-          // alert('error'+ error);
+          Alert.alert('PDF Created', 'No app found to open the PDF.\n' + filepath);
         });
     };
     // Refresh handler — re-call API with current filters
   const OnRefresh = async () => {
     setRefreshing(true);
     try {
-      await CallAPI(BaseURL, CompCode, Fy, ActiveCode, DepartmentCode, RType);
+      await loadTab(ActiveCode);
     } catch (e) {
       console.warn("Refresh error:", e);
     } finally {
@@ -313,7 +318,7 @@ html += `</table>
               setUnApprovalActive(false);
               setBoth(false);
               setActiveCode(2);
-              CallAPI(BaseURL, CompCode, Fy, 2, DepartmentCode, RType);
+              loadTab(2);
             }}
             style={
               ApprovalActive === true
@@ -337,7 +342,7 @@ html += `</table>
               setUnApprovalActive(true);
               setBoth(false);
               setActiveCode(1);
-              CallAPI(BaseURL, CompCode, Fy, 1, DepartmentCode, RType);
+              loadTab(1);
             }}
             style={
               UnApprovalActive === true
@@ -362,7 +367,7 @@ html += `</table>
               setUnApprovalActive(false);
               setBoth(true);
               setActiveCode(3);
-              CallAPI(BaseURL, CompCode, Fy, 3, DepartmentCode, RType);
+              loadTab(3);
             }}
             style={
               Both === true
@@ -378,29 +383,37 @@ html += `</table>
         </View>
 
         <CustomSearch
+          wildSearch
           data={DepartmentData}
           placeholder={"Search Department Here..."}
           setvalue={(item) => {
-            setDepartmentCode(item.Code);
             if (RType === 2) {
+              // Party report needs an item code, so wait for the item to be picked; reset the old item search
+              resetItemSearch();
               callItemMasterAPI(BaseURL, CompCode, Fy, 6, item.Code);
             } else {
+              setDepartmentCode(item.Code);
               CallAPI(BaseURL, CompCode, Fy, ActiveCode, item.Code, RType);
             }
           }}
-          setcrosValue={() => {}}
+          setcrosValue={() => {
+            if (RType === 2) resetItemSearch();
+            else setDepartmentCode(0);
+          }}
           setitemDetails={() => setListData([])}
         />
 
         {ShowItemSearch === true ? (
           <CustomSearch
+            key={ItemSearchKey}
+            wildSearch
             data={ItemData}
             placeholder={"Search Item Here..."}
             setvalue={(item) => {
               setDepartmentCode(item.Code);
               CallAPI(BaseURL, CompCode, Fy, ActiveCode, item.Code, RType);
             }}
-            setcrosValue={() => {}}
+            setcrosValue={() => setDepartmentCode(0)}
             setitemDetails={() => setListData([])}
           />
         ) : null}
@@ -409,7 +422,7 @@ html += `</table>
       <FlatList
         data={ListData}
         keyExtractor={(item, index) => index.toString()}
-        renderItem={(Item) => <RenderItem Item={Item} />}
+        renderItem={(Item) => <RenderItem Item={Item} RType={RType} IType={ListType} />}
         onRefresh={OnRefresh}
         refreshing={refreshing}
         contentContainerStyle={{ paddingBottom: 40 }}

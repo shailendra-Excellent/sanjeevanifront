@@ -2,7 +2,8 @@ import {
   ActivityIndicator, Image, StyleSheet, Text, View,
   SafeAreaView, TextInput, TouchableOpacity, TouchableWithoutFeedback, FlatList, Alert, Modal, Button, Keyboard, ScrollView, Pressable
 } from 'react-native'
-import React, { useState, useEffect, useMemo, } from 'react';
+import React, { useState, useEffect, useMemo, useRef, } from 'react';
+import { filterByText } from './Components/useDebounce';
 import DefaultPreference from 'react-native-default-preference';
 import SearchBar from "react-native-dynamic-search-bar";
 import RNBounceable from '@freakycoder/react-native-bounceable';
@@ -175,21 +176,21 @@ const CartList = ({ navigation, route }) => {
     }
   }
 
-  const searchFilterFunction = useMemo((text) => {
-    const newData = CartData.filter(
-      function (item) {
-        const itemData = item.ItemName.toUpperCase()
-          ? item.ItemName.toUpperCase()
-          : "".toUpperCase();
-        const textData = ItemName.toUpperCase();
-        return itemData.indexOf(textData) > -1;
-      });
-    if (ItemName) {
-      setCartListData(newData)
-    } else {
-      setCartListData(Defaultdata)
+  // Filter after the user pauses typing (setState must not run inside useMemo)
+  const isFirstSearch = useRef(true);
+  useEffect(() => {
+    if (isFirstSearch.current) {
+      isFirstSearch.current = false;
+      return;
     }
-    // setDepartmentObj({...DepartmentObj,DepartmentData:newData})
+    const timer = setTimeout(() => {
+      if (ItemName) {
+        setCartListData(filterByText(CartData, ItemName, item => item.ItemName))
+      } else {
+        setCartListData(Defaultdata)
+      }
+    }, ItemName ? 250 : 0);
+    return () => clearTimeout(timer);
   }, [ItemName]);
   //cart list details function
 

@@ -1,28 +1,33 @@
-import React, { useEffect, useState } from "react";
+import React, { memo, useEffect, useState } from "react";
 import { Keyboard, Image, View, ScrollView, Text, TouchableOpacity, Modal, ActivityIndicator, FlatList, TextInput } from 'react-native';
 import DefaultPreference from 'react-native-default-preference';
 import moment from "moment";
+import { filterByText, useDebouncedCallback } from './Components/useDebounce';
 let GrandTotalQty = 0
 import Tts from 'react-native-tts';
 import { Checkbox } from 'react-native-paper'
-const RenderComponent = ({ key, item, totalQty }) => {
+// memo: a row re-renders only when its item changes (not on every search keystroke)
+const RenderComponent = memo(({ item }) => {
+  let totalQty = 0
+  item.ItemParamDT.forEach((paramDT) => {
+    totalQty = paramDT.Qty + totalQty
+  })
   return (
-    <View key={key} style={{ flexDirection: 'row', borderBottomWidth: 1 }}>
+    // Highlight items that have stock in Janta Gali
+    <View style={{ flexDirection: 'row', borderBottomWidth: 1, backgroundColor: item.QtyJG > 0 ? '#FFE08A' : '#fff' }}>
 
       <Text style={{ padding: 5, color: '#000', width: 170, borderRightWidth: 1, borderRightColor: '#000', padding: 10 }}>{item.ItemName}</Text>
       <Text style={{ padding: 5, color: '#000', width: 100, borderRightWidth: 1, borderRightColor: '#000' }}>{item.Color}</Text>
       <Text style={{ padding: 5, color: '#000', width: 80, borderRightWidth: 1, borderRightColor: '#000' }}>{totalQty.toString()}</Text>
 
-      <View key={item.ItemCode} style={{ flexDirection: 'row' }}>
-        <FlatList horizontal={true} keyboardShouldPersistTaps={'handled'} data={item.ItemParamDT} renderItem={({ index, item }) => {
-          //   totalQty=totalQty+item.Qty;
-
-          sizeQty = item.Size + '/' + item.Qty;
-          if (item.Qty > 1) {
+      {/* Plain row instead of a nested FlatList: each item has only a few sizes */}
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        {item.ItemParamDT.map((paramDT, index) => {
+          if (paramDT.Qty > 1) {
             return (
               <View key={index} style={{ flexDirection: 'row' }}>
-                <Text style={{ color: '#000', padding: 5, fontWeight: '600', color: 'red' }} >{item.Size + ' /'}</Text>
-                <Text style={{ color: '#000', padding: 5, fontWeight: '600', color: 'blue' }} >{item.Qty + ','}</Text>
+                <Text style={{ color: '#000', padding: 5, fontWeight: '600', color: 'red' }} >{paramDT.Size + ' /'}</Text>
+                <Text style={{ color: '#000', padding: 5, fontWeight: '600', color: 'blue' }} >{paramDT.Qty + ','}</Text>
 
               </View>
 
@@ -30,31 +35,30 @@ const RenderComponent = ({ key, item, totalQty }) => {
           } else {
             let Qty = 1
             return (
-              <View style={{ flexDirection: 'row' }} >
+              <View key={index} style={{ flexDirection: 'row' }} >
 
-                <Text style={{ color: '#000', fontWeight: '600', color: 'red' }} >{item.Size + ' /'}</Text>
+                <Text style={{ color: '#000', fontWeight: '600', color: 'red' }} >{paramDT.Size + ' /'}</Text>
                 <Text style={{ color: '#000', fontWeight: '600', color: 'blue' }} >{Qty + ','}</Text>
 
               </View>
             )
           }
-
-        }} />
+        })}
         {/* {item.ItemParamDT.map((ItemParamDT,index)=>{
                             sizeQty = ItemParamDT.Size + '/'+ItemParamDT.Qty
                    if(ItemParamDT.Qty > 1 ){
-                    return( 
+                    return(
                       <View key={index} style={{borderBottomWidth:1}}>
                                       <Text  style={{color:'#000',padding:5,fontWeight:'600',color:'red'}} >{sizeQty}</Text>
                       </View>
-                 
+
                   )
                    }else{
-                    return( 
+                    return(
                       <View style={{borderBottomWidth:1}}>
-                       
+
                        <Text style={{color:'#000',padding:5,fontWeight:'600',color:'red'}} >{ItemParamDT.Size+ ', '}</Text>
-         
+
                       </View>
                   )
                    }
@@ -62,7 +66,9 @@ const RenderComponent = ({ key, item, totalQty }) => {
       </View>
     </View>
   )
-}
+})
+const renderStockRow = ({ item }) => <RenderComponent item={item} />
+const stockKeyExtractor = (item, index) => `${item.ItemCode}-${item.Color}-${index}`
 const ItemStockReport = ({ route }) => {
   const { code, MAsterCode, checkDepartmentWise, DepartmentName } = route.params;
   const [StockData, setStockData] = useState([]);
@@ -77,6 +83,10 @@ const ItemStockReport = ({ route }) => {
   const [speechPitch, setSpeechPitch] = useState(1);
   const [text, setText] = useState('Hello User')
   const [ActualData, setActualData] = useState([])
+  const [listHeight, setListHeight] = useState(0)
+  const [showJantaGali, setShowJantaGali] = useState(false)
+  // "Show Stock In Janta Gali": only items with QtyJG > 0 (applied on top of search)
+  const listData = showJantaGali ? StockData.filter(item => item.QtyJG > 0) : StockData
 
   useEffect(() => {
     // DefaultPreference.get('BaseURL').then(function (BaseURL) {
@@ -86,34 +96,23 @@ const ItemStockReport = ({ route }) => {
     //     })
     //   })
     // })
-    Tts.addEventListener(
-      'tts-start',
-      (_event) => setTtsStatus('started')
-    );
-    Tts.addEventListener(
-      'tts-finish',
-      (_event) => setTtsStatus('finished')
-    );
-    Tts.addEventListener(
-      'tts-cancel',
-      (_event) => setTtsStatus('cancelled')
-    );
-    Tts.setDefaultRate(speechRate);
-    Tts.setDefaultPitch(speechPitch);
-    Tts.getInitStatus().then(initTts);
+    // Keep the subscriptions: Tts.removeEventListener calls removeListener, which RN 0.72 no longer has.
+    const ttsSubscriptions = [
+      Tts.addEventListener('tts-start', (_event) => setTtsStatus('started')),
+      Tts.addEventListener('tts-finish', (_event) => setTtsStatus('finished')),
+      Tts.addEventListener('tts-cancel', (_event) => setTtsStatus('cancelled')),
+    ];
+    // TTS calls reject on phones without a text-to-speech engine; the report must still work there.
+    Tts.getInitStatus()
+      .then(() => {
+        Tts.setDefaultRate(speechRate).catch(() => { });
+        Tts.setDefaultPitch(speechPitch).catch(() => { });
+        return initTts();
+      })
+      .catch((err) => console.log('TTS not available', err));
     return () => {
-      Tts.removeEventListener(
-        'tts-start',
-        (_event) => setTtsStatus('started')
-      );
-      Tts.removeEventListener(
-        'tts-finish',
-        (_event) => setTtsStatus('finished'),
-      );
-      Tts.removeEventListener(
-        'tts-cancel',
-        (_event) => setTtsStatus('cancelled'),
-      );
+      ttsSubscriptions.forEach((subscription) => subscription.remove());
+      Tts.stop().catch(() => { });
     };
   }, []);
 
@@ -155,6 +154,11 @@ const ItemStockReport = ({ route }) => {
     }
   };
 
+  const speak = (message) => {
+    Tts.stop().catch(() => { });
+    Tts.speak(message).catch((err) => console.log('TTS speak failed', err));
+  };
+
   const StockStatusAPI = async (BaseURL, CompCode, FY, code, MAsterCode, AvailQtyOnly) => {
     setIsloading(true)
     try {
@@ -175,11 +179,9 @@ const ItemStockReport = ({ route }) => {
             })
           });
           if (checkDepartmentWise == true) {
-            Tts.stop();
-            Tts.speak('Total' + GrandTotalQty.toFixed() + 'stock availavel in ' + DepartmentName + ' department  ');
+            speak('Total' + GrandTotalQty.toFixed() + 'stock availavel in ' + DepartmentName + ' department  ');
           } else {
-            Tts.stop();
-            Tts.speak('Total' + GrandTotalQty.toFixed() + 'stock availavle in this item');
+            speak('Total' + GrandTotalQty.toFixed() + 'stock availavle in this item');
           }
 
           // response.Data.forEach(element => {
@@ -208,51 +210,19 @@ const ItemStockReport = ({ route }) => {
 
   }
 
+  // Always filter the full list (ActualData) so backspace brings results back
+  const runSearchFilter = useDebouncedCallback(text => {
+    setStockData(filterByText(ActualData, text, item => MAsterCode == 6 ? item.Color : item.ItemName));
+    setSpeenar(false);
+  });
   const searchFilter = text => {
-    if (text) {
-      // Inserted text is not blank
-      // Filter the masterDataSource and update FilteredDataSource
-      const newData = StockData.filter(
-        function (item) {
-          if (MAsterCode == 6) {
-            // Applying filter for the inserted text in search bar
-            const itemData = item.Color
-              ? item.Color.toUpperCase()
-              : ''.toUpperCase();
-            const textData = text.toUpperCase();
-            return itemData.indexOf(textData) > -1;
-          } else {
-            // Applying filter for the inserted text in search bar
-            const itemData = item.ItemName
-              ? item.ItemName.toUpperCase()
-              : ''.toUpperCase();
-
-            const textData = text.toUpperCase();
-            return itemData.indexOf(textData) > -1;
-          }
-
-        }
-      );
-      setSpeenar(false);
-
-      // console.log(newData)
-      setStockData(newData)
-      setSearch(text);
-    } else {
-      setStockData(ActualData)
-      // setData(lisdata);
-      setSpeenar(false)
-      // Inserted text is blank
-      // Update FilteredDataSource with masterDataSource
-      // setSpeenar(false)
-      // setFilterData([]);
-      setSearch(text);
-    }
+    setSearch(text);
+    runSearchFilter(text);
   };
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView keyboardShouldPersistTaps={'handled'}>
+      <View>
         {checkDepartmentWise == true ? <View style={{ alignItems: 'center' }}>
           <Text style={{ color: 'red', fontSize: 17, padding: 5 }}>Department: {DepartmentName}</Text>
         </View> : <></>}
@@ -267,6 +237,17 @@ const ItemStockReport = ({ route }) => {
           />
           <Text style={{ fontSize: 16, color: '#000', fontWeight: 'bold' }}>Pending Stock</Text>
         </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Checkbox
+            color="#F39505"
+            uncheckedColor="#000"
+            status={showJantaGali ? 'checked' : 'unchecked'}
+            onPress={() => {
+              setShowJantaGali(!showJantaGali)
+            }}
+          />
+          <Text style={{ fontSize: 16, color: '#000', fontWeight: 'bold' }}>Show Stock In Janta Gali</Text>
+        </View>
 
         <View style={{ flexDirection: 'row', width: '95%', borderWidth: 1, margin: 10, borderRadius: 5, alignItems: 'center' }}>
 
@@ -278,7 +259,7 @@ const ItemStockReport = ({ route }) => {
             }} />
 
           <TouchableOpacity onPress={() => {
-            setSearch('')
+            searchFilter('')
             Keyboard.dismiss()
             if (checkDepartmentWise == true) {
               setStockData(ActualData)
@@ -290,8 +271,12 @@ const ItemStockReport = ({ route }) => {
           </TouchableOpacity>
         </View>
 
-        <ScrollView horizontal={true}>
-          <View>
+      </View>
+
+      {/* Table area: fills the remaining screen so the FlatList can virtualize rows */}
+      <View style={{ flex: 1 }} onLayout={(e) => setListHeight(e.nativeEvent.layout.height)}>
+        <ScrollView horizontal={true} keyboardShouldPersistTaps={'handled'}>
+          <View style={{ height: listHeight }}>
             <View style={{ flexDirection: 'row', backgroundColor: '#000' }}>
               <Text style={{ padding: 5, color: '#fff', width: 170, borderRightWidth: 1, borderRightColor: '#fff' }}>Item Name</Text>
               <Text style={{ padding: 5, color: '#fff', width: 100, borderRightWidth: 1, borderRightColor: '#fff' }}>Color</Text>
@@ -303,72 +288,12 @@ const ItemStockReport = ({ route }) => {
               </View>
 
             </View>
-            <FlatList keyboardShouldPersistTaps={'handled'} data={StockData} renderItem={({ index, item }) => {
-              // console.log(item)
-              let totalQty = 0
-              item.ItemParamDT.map((paramDT) => {
-                totalQty = paramDT.Qty + totalQty
-              })
-              return (
-                <RenderComponent key={index} item={item} totalQty={totalQty} />
-                // <View key={index} style={{flexDirection:'row',borderBottomWidth:1}}>
-
-                //       <Text style={{padding:5,color:'#000',width:170,borderRightWidth:1,borderRightColor:'#000',padding:10}}>{item.ItemName}</Text>
-                //       <Text style={{padding:5,color:'#000',width:100,borderRightWidth:1,borderRightColor:'#000'}}>{item.Color}</Text>
-                //       <Text style={{padding:5,color:'#000',width:80,borderRightWidth:1,borderRightColor:'#000'}}>{totalQty.toString()}</Text>
-
-                //     <View key={item.ItemCode} style={{flexDirection:'row'}}>
-                //       <FlatList horizontal={true} data={item.ItemParamDT} renderItem={({index,item})=>{
-                //   //   totalQty=totalQty+item.Qty;
-
-                //     sizeQty = item.Size + '/'+item.Qty;
-                //         if(item.Qty > 1 ){
-                //          return( 
-                //            <View key={index} style={{flexDirection:'row'}}>
-                //                            <Text  style={{color:'#000',padding:5,fontWeight:'600',color:'red'}} >{item.Size +' /'}</Text>
-                //                            <Text  style={{color:'#000',padding:5,fontWeight:'600',color:'blue'}} >{item.Qty + ','}</Text>
-
-                //            </View>
-
-                //        )
-                //         }else{
-                //           let Qty=1
-                //          return( 
-                //            <View style={{flexDirection:'row'}} >
-
-                //             <Text style={{color:'#000',fontWeight:'600',color:'red'}} >{item.Size+ ' /'}</Text>
-                //             <Text  style={{color:'#000',fontWeight:'600',color:'blue'}} >{Qty + ','}</Text>
-
-                //            </View>
-                //        )
-                //         }
-
-                //       }} />
-                //       {/* {item.ItemParamDT.map((ItemParamDT,index)=>{
-                //                   sizeQty = ItemParamDT.Size + '/'+ItemParamDT.Qty
-                //          if(ItemParamDT.Qty > 1 ){
-                //           return( 
-                //             <View key={index} style={{borderBottomWidth:1}}>
-                //                             <Text  style={{color:'#000',padding:5,fontWeight:'600',color:'red'}} >{sizeQty}</Text>
-                //             </View>
-
-                //         )
-                //          }else{
-                //           return( 
-                //             <View style={{borderBottomWidth:1}}>
-
-                //              <Text style={{color:'#000',padding:5,fontWeight:'600',color:'red'}} >{ItemParamDT.Size+ ', '}</Text>
-
-                //             </View>
-                //         )
-                //          }
-                //       })} */}
-                //         </View>
-                //      </View>
-              )
-            }} />
+            <FlatList style={{ flex: 1 }} keyboardShouldPersistTaps={'handled'} data={listData}
+              renderItem={renderStockRow} keyExtractor={stockKeyExtractor}
+              initialNumToRender={20} maxToRenderPerBatch={20} windowSize={9} />
           </View>
         </ScrollView>
+      </View>
 
 
 
@@ -379,7 +304,6 @@ const ItemStockReport = ({ route }) => {
           </View>
         </Modal>
 
-      </ScrollView>
       <View style={{ justifyContent: 'flex-end' }}>
         <View style={{ backgroundColor: '#000', width: '100%', alignItems: 'center' }}>
           <Text style={{ color: '#fff', padding: 7, fontSize: 20 }}>Total Qty : {GrandTotalQty.toString()}</Text>

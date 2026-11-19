@@ -1,0 +1,291 @@
+diff --git a/node_modules/react-native-html-to-pdf/android/src/main/java/android/print/PdfConverter.java b/node_modules/react-native-html-to-pdf/android/src/main/java/android/print/PdfConverter.java
+index 5d61c5f..7f18be9 100644
+--- a/node_modules/react-native-html-to-pdf/android/src/main/java/android/print/PdfConverter.java
++++ b/node_modules/react-native-html-to-pdf/android/src/main/java/android/print/PdfConverter.java
+@@ -7,6 +7,8 @@ package android.print;
+ 
+ import android.content.Context;
+ import android.os.Build;
++import android.os.Bundle;
++import android.os.CancellationSignal;
+ import android.os.Handler;
+ import android.os.ParcelFileDescriptor;
+ import android.util.Log;
+@@ -27,12 +29,16 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument;
+ /**
+  * Converts HTML to PDF.
+  * <p>
+- * Can convert only one task at a time, any requests to do more conversions before
+- * ending the current task are ignored.
++ * Can convert only one task at a time; a request made while another is running is rejected.
++ * <p>
++ * Patched (patch-package): waits for onLayoutFinished before writing (newer WebViews lay out
++ * asynchronously), always settles the promise, ignores repeated onPageFinished calls, and
++ * resets itself after a timeout so one stuck conversion cannot block every later PDF.
+  */
+ public class PdfConverter implements Runnable {
+ 
+     private static final String TAG = "PdfConverter";
++    private static final long TIMEOUT_MS = 60000;
+     private static PdfConverter sInstance;
+ 
+     private Context mContext;
+@@ -45,6 +51,14 @@ public class PdfConverter implements Runnable {
+     private WritableMap mResultMap;
+     private Promise mPromise;
+     private String mBaseURL;
++    private boolean mLayoutStarted;
++    private Handler mHandler;
++    private final Runnable mTimeout = new Runnable() {
++        @Override
++        public void run() {
++            fail("PDF creation timed out, please retry");
++        }
++    };
+ 
+     private PdfConverter() {
+     }
+@@ -58,63 +72,136 @@ public class PdfConverter implements Runnable {
+ 
+     @Override
+     public void run() {
+-        mWebView = new WebView(mContext);
+-        mWebView.setWebViewClient(new WebViewClient() {
+-            @Override
+-            public void onPageFinished(WebView view, String url) {
+-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT)
+-                    throw new RuntimeException("call requires API level 19");
+-                else {
+-                    PrintDocumentAdapter documentAdapter = mWebView.createPrintDocumentAdapter();
+-                    documentAdapter.onLayout(null, getPdfPrintAttrs(), null, new PrintDocumentAdapter.LayoutResultCallback() {
+-                    }, null);
+-                    documentAdapter.onWrite(new PageRange[]{PageRange.ALL_PAGES}, getOutputFileDescriptor(), null, new PrintDocumentAdapter.WriteResultCallback() {
++        try {
++            mHandler.postDelayed(mTimeout, TIMEOUT_MS);
++            mWebView = new WebView(mContext);
++            mWebView.setWebViewClient(new WebViewClient() {
++                @Override
++                public void onPageFinished(WebView view, String url) {
++                    // Some WebView versions call this more than once for the same page.
++                    if (mLayoutStarted || view != mWebView || mPromise == null)
++                        return;
++                    mLayoutStarted = true;
++                    layout(view, view.createPrintDocumentAdapter("document"));
++                }
++            });
++            WebSettings settings = mWebView.getSettings();
++            settings.setTextZoom(100);
++            settings.setDefaultTextEncodingName("utf-8");
++            settings.setAllowFileAccess(true);
++            mWebView.loadDataWithBaseURL(mBaseURL, mHtmlString, "text/HTML", "utf-8", null);
++        } catch (Throwable e) {
++            Log.e(TAG, "Failed to start PDF conversion", e);
++            fail(e.getMessage() != null ? e.getMessage() : "Error occurred generating the pdf");
++        }
++    }
++
++    private void layout(final WebView view, final PrintDocumentAdapter documentAdapter) {
++        try {
++            documentAdapter.onLayout(null, getPdfPrintAttrs(), new CancellationSignal(),
++                    new PrintDocumentAdapter.LayoutResultCallback() {
++                        @Override
++                        public void onLayoutFinished(PrintDocumentInfo info, boolean changed) {
++                            if (view != mWebView)
++                                return;
++                            write(view, documentAdapter);
++                        }
++
++                        @Override
++                        public void onLayoutFailed(CharSequence error) {
++                            if (view != mWebView)
++                                return;
++                            fail(error != null ? error.toString() : "PDF layout failed");
++                        }
++
++                        @Override
++                        public void onLayoutCancelled() {
++                            if (view != mWebView)
++                                return;
++                            fail("PDF layout cancelled");
++                        }
++                    }, new Bundle());
++        } catch (Throwable e) {
++            Log.e(TAG, "PDF layout failed", e);
++            fail(e.getMessage() != null ? e.getMessage() : "PDF layout failed");
++        }
++    }
++
++    private void write(final WebView view, PrintDocumentAdapter documentAdapter) {
++        final ParcelFileDescriptor descriptor = getOutputFileDescriptor();
++        if (descriptor == null) {
++            fail("Could not create the pdf file");
++            return;
++        }
++        try {
++            documentAdapter.onWrite(new PageRange[]{PageRange.ALL_PAGES}, descriptor, new CancellationSignal(),
++                    new PrintDocumentAdapter.WriteResultCallback() {
+                         @Override
+                         public void onWriteFinished(PageRange[] pages) {
+-                            try {
+-                                String base64 = "";
+-                                if (mShouldEncode) {
+-                                    base64 = encodeFromFile(mPdfFile);
+-                                }
+-
+-                                PDDocument myDocument = PDDocument.load(mPdfFile);
+-                                int pagesToBePrinted = myDocument.getNumberOfPages();
+-
+-                                mResultMap.putString("filePath", mPdfFile.getAbsolutePath());
+-                                mResultMap.putString("numberOfPages", String.valueOf(pagesToBePrinted));
+-                                mResultMap.putString("base64", base64);
+-                                mPromise.resolve(mResultMap);
+-                            } catch (IOException e) {
+-                                mPromise.reject(e.getMessage());
+-                            } finally {
+-                                destroy();
+-                            }
++                            closeQuietly(descriptor);
++                            // Ignore a late callback from a conversion that already timed out.
++                            if (view != mWebView)
++                                return;
++                            finish();
+                         }
+ 
+                         @Override
+                         public void onWriteFailed(CharSequence error) {
+-                            String errorResult = "Please retry, Error occurred generating the pdf";
+-                            if (error != null) {
+-                                errorResult = error.toString();
+-                            }
+-                            mPromise.reject(errorResult);
+-                            destroy();
++                            closeQuietly(descriptor);
++                            if (view != mWebView)
++                                return;
++                            fail(error != null ? error.toString() : "Please retry, Error occurred generating the pdf");
+                         }
+ 
+                         @Override
+                         public void onWriteCancelled() {
+-                            destroy();
++                            closeQuietly(descriptor);
++                            if (view != mWebView)
++                                return;
++                            fail("PDF creation cancelled");
+                         }
+-
+                     });
+-                }
++        } catch (Throwable e) {
++            closeQuietly(descriptor);
++            Log.e(TAG, "PDF write failed", e);
++            fail(e.getMessage() != null ? e.getMessage() : "PDF write failed");
++        }
++    }
++
++    private void finish() {
++        if (mPromise == null)
++            return;
++        try {
++            String base64 = "";
++            if (mShouldEncode) {
++                base64 = encodeFromFile(mPdfFile);
++            }
++
++            // Page count is informational; a big PDF must not fail on low-memory phones because of it.
++            String pagesToBePrinted = "0";
++            try {
++                PDDocument myDocument = PDDocument.load(mPdfFile);
++                pagesToBePrinted = String.valueOf(myDocument.getNumberOfPages());
++                myDocument.close();
++            } catch (Throwable e) {
++                Log.w(TAG, "Could not count pdf pages", e);
+             }
+-        });
+-        WebSettings settings = mWebView.getSettings();
+-        settings.setTextZoom(100);
+-        settings.setDefaultTextEncodingName("utf-8");
+-        settings.setAllowFileAccess(true);
+-        mWebView.loadDataWithBaseURL(mBaseURL, mHtmlString, "text/HTML", "utf-8", null);
++
++            mResultMap.putString("filePath", mPdfFile.getAbsolutePath());
++            mResultMap.putString("numberOfPages", pagesToBePrinted);
++            mResultMap.putString("base64", base64);
++            mPromise.resolve(mResultMap);
++            destroy();
++        } catch (Throwable e) {
++            fail(e.getMessage() != null ? e.getMessage() : "Error occurred generating the pdf");
++        }
++    }
++
++    private void fail(String message) {
++        if (mPromise == null)
++            return;
++        mPromise.reject("PDF_ERROR", message);
++        destroy();
+     }
+ 
+     public PrintAttributes getPdfPrintAttrs() {
+@@ -134,8 +221,10 @@ public class PdfConverter implements Runnable {
+         if (file == null)
+             throw new Exception("file can't be null");
+ 
+-        if (mIsCurrentlyConverting)
++        if (mIsCurrentlyConverting) {
++            promise.reject("PDF_BUSY", "Another PDF is being created, please wait and retry");
+             return;
++        }
+ 
+         mContext = context;
+         mHtmlString = htmlString;
+@@ -145,7 +234,9 @@ public class PdfConverter implements Runnable {
+         mResultMap = resultMap;
+         mPromise = promise;
+         mBaseURL = baseURL;
+-        runOnUiThread(this);
++        mLayoutStarted = false;
++        mHandler = new Handler(context.getMainLooper());
++        mHandler.post(this);
+     }
+ 
+     private ParcelFileDescriptor getOutputFileDescriptor() {
+@@ -169,12 +260,21 @@ public class PdfConverter implements Runnable {
+ 
+     }
+ 
+-    private void runOnUiThread(Runnable runnable) {
+-        Handler handler = new Handler(mContext.getMainLooper());
+-        handler.post(runnable);
++    private static void closeQuietly(ParcelFileDescriptor descriptor) {
++        try {
++            descriptor.close();
++        } catch (IOException e) {
++            Log.w(TAG, "Failed to close ParcelFileDescriptor", e);
++        }
+     }
+ 
+     private void destroy() {
++        if (mHandler != null) {
++            mHandler.removeCallbacks(mTimeout);
++        }
++        if (mWebView != null) {
++            mWebView.destroy();
++        }
+         mContext = null;
+         mHtmlString = null;
+         mPdfFile = null;
+@@ -184,12 +284,14 @@ public class PdfConverter implements Runnable {
+         mShouldEncode = false;
+         mResultMap = null;
+         mPromise = null;
++        mLayoutStarted = false;
+     }
+ 
+     private String encodeFromFile(File file) throws IOException{
+       RandomAccessFile randomAccessFile = new RandomAccessFile(file, "r");
+       byte[] fileBytes = new byte[(int)randomAccessFile.length()];
+       randomAccessFile.readFully(fileBytes);
++      randomAccessFile.close();
+       return Base64.encodeToString(fileBytes, Base64.DEFAULT);
+     }
+ }

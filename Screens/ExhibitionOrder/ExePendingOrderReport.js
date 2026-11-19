@@ -5,6 +5,7 @@ import DropdownComponent from '../Components/ItemCreateComp/DropDownComp';
 import RNBounceable from '@freakycoder/react-native-bounceable';
 import { CreatePDF } from './ExhibitionOrderPDF';
 import Share from 'react-native-share';
+import { showShareError } from '../Components/PdfUtils';
 import MultiSelectComponent from '../Components/ItemCreateComp/MultiSelectItem';
 import ToasterMsg from '../Components/ToasterMsg';
 import BtnComp from './BtnComp';
@@ -167,12 +168,20 @@ const ExePendingOrderReport = () => {
     }, []);
     const FileViewFun = async (Data) => {
         // console.log('PDFffffffffffffff',Data)
-        let newData =
-            setisLoading(true)
         if (Data.length > 0) {
             setisLoading(true)
-            let resonse = await CreatePDF(Data, TotalWithRemark == true ? 1 : 0);
+            let resonse;
+            try {
+                resonse = await CreatePDF(Data, TotalWithRemark == true ? 1 : 0);
+            } catch (err) {
+                setisLoading(false);
+                Alert.alert('PDF Error', err.message || 'Failed to create PDF');
+                return;
+            }
             setisLoading(false)
+            if (!resonse) {
+                return;
+            }
 
             Share.open({
                 title: "Order PDF",
@@ -184,7 +193,7 @@ const ExePendingOrderReport = () => {
                 })
                 .catch((err) => {
                     setisLoading(false);
-                    Alert.alert(err.message);
+                    showShareError(err);
                 });
         }
 

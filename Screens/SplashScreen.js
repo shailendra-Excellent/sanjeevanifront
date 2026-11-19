@@ -41,8 +41,8 @@ export const SplashScreen = ({ navigation }) => {
                                         // DefaultPreference.set('BaseURL', 'http://103.117.156.43:1865');
                                         // DefaultPreference.set('CompCode', 'comp0019');
 
-                                        DefaultPreference.set('FY', '2025');
-                                        global.Fy = '2025'
+                                        DefaultPreference.set('FY', '2026');
+                                        global.Fy = '2026'
 
                                         setTimeout(() => {
                                             navigation.replace('Login');
@@ -51,7 +51,7 @@ export const SplashScreen = ({ navigation }) => {
                                     } else {
                                         if (uname == '' || uname == null) {
                                             setTimeout(() => {
-                                                global.Fy = '2025'
+                                                global.Fy = '2026'
                                                 navigation.replace('Login');
                                             }, 4000);
                                         } else {
@@ -72,6 +72,17 @@ export const SplashScreen = ({ navigation }) => {
         })
 
     }, [])
+
+    const goToLogin = async () => {
+        try {
+            await Promise.all([
+                DefaultPreference.clear('Uname'),
+                DefaultPreference.clear('Password'),
+                DefaultPreference.clear('RightsType'),
+            ]);
+        } catch (e) { }
+        navigation.replace('Login');
+    }
 
     const ValidateUserAPI = async (BaseURL, UserName, password, Token, Compcode) => {
         try {
@@ -116,8 +127,8 @@ export const SplashScreen = ({ navigation }) => {
                         }
                     }
                 } else {
-                    Alert.alert('', 'Invalid user')
-
+                    // Saved login is no longer valid (e.g. password changed): clear it and go to Login
+                    Alert.alert('', 'Invalid user', [{ text: 'OK', onPress: goToLogin }], { cancelable: false })
                 }
             }
         } catch (e) {

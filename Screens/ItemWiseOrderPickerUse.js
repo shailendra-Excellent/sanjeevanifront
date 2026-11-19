@@ -9,6 +9,7 @@ import { Checkbox } from 'react-native-paper'
 import { ActivityIndicator } from "react-native";
 import RNBounceable from "@freakycoder/react-native-bounceable";
 import SearchBar from "react-native-dynamic-search-bar";
+import { filterByText } from './Components/useDebounce';
 import DropdownComponent from "./Components/ItemCreateComp/DropDownComp";
 import { Modal } from 'react-native-paper';
 // import { SafeAreaView } from "react-native-safe-area-context";
@@ -280,25 +281,13 @@ const ItemWiseOrderPicker = ({ navigation, route }) => {
   }
 
   // ---------------------------Search Function call
-  const searchFilterFunction = React.useMemo((text) => {
-    if (search) {
-
-      const newData = masterDataSource.filter(
-        function (item) {
-          const itemData = item.ItemName
-            ? item.ItemName.toUpperCase()
-            : ''.toUpperCase();
-          const textData = search.toUpperCase();
-          return itemData.indexOf(textData) > -1;
-        });
-      setData(newData);
-      setsearch(search);
-    } else {
-      // Inserted text is blank
-      // Update FilteredDataSource with masterDataSource
-      setData(masterDataSource);
-      setsearch(search);
-    }
+  // Filter after the user pauses typing (setState must not run inside useMemo)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // Inserted text is blank -> filterByText returns masterDataSource
+      setData(filterByText(masterDataSource, search, item => item.ItemName));
+    }, search ? 250 : 0);
+    return () => clearTimeout(timer);
   }, [masterDataSource, search])
 
   //--------------------------APProval APICall

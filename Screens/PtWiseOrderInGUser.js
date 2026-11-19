@@ -137,10 +137,35 @@ let arr3 = []
 let arr4 = []
 let arr5 = []
 
+const STOCK_ERROR = 'Transfer quantity cannot exceed available stock.';
+
+// All items of the order across List 1-5, each item object only once.
+const allItems = () => [...new Set([...arr1, ...arr2, ...arr3, ...arr4, ...arr5])];
+
+const lineKey = (itemCode, row) => itemCode + '|' + String(row.Color).toUpperCase() + '|' + row.Size;
+
+// Source godown stock for one row; StockAvailable 0 means no stock.
+const rowStock = (row) => (row.StockAvailable == 0 ? 0 : Math.max(0, parseInt(row.Stock) || 0));
+
+// Transfer qty already entered for an item/color/size; duplicate rows of the same product share one stock.
+const enteredQty = (key) => {
+  let total = 0;
+  allItems().forEach(item => {
+    item.ItemParamDT.forEach(row => {
+      if (lineKey(item.ItemCode, row) === key) {
+        total = total + (parseInt(row.TfrQty) || 0);
+      }
+    });
+  });
+  return total;
+};
+
 const PtWiseOrderInGUser = ({ navigation }) => {
   // let Data=[];
 
   const scanRef = useRef(null);
+  const submittingRef = useRef(false);
+  const scansInFlight = useRef(new Set());
   const [checked, setChecked] = React.useState(false);
   const [HeaderInfo, setHeaderInfo] = useState({});
   const [Data, setData] = useState([]);
@@ -171,7 +196,6 @@ const PtWiseOrderInGUser = ({ navigation }) => {
   const [checkArr4, setcheckArr4] = useState(false)
   const [checkArr5, setcheckArr5] = useState(false)
 
-   const [MrgArr,setMrgArr]= useState([])
   useEffect(() => {
     DefaultPreference.get('ItemInfo').then(function (itemheaderInfo) {
       DefaultPreference.get('BaseURL').then(function (BaseUrl) {
@@ -344,43 +368,44 @@ const PtWiseOrderInGUser = ({ navigation }) => {
       })
 
       DefaultPreference.get('GodownData').then(function (GodownData) {
-        if (GodownData !== null) {
-          // arr1 = JSON.parse(GodownData).slice(0, arrLength);
-          // arr2 = JSON.parse(GodownData).slice(arrLength, arrLength2);
-          // arr3 = JSON.parse(GodownData).slice(arrLength2, arrLength3);
-          // arr4 = JSON.parse(GodownData).slice(arrLength3, arrLength4);
-          if (checkArr1 == true) {
-            arr1 = JSON.parse(GodownData);
-            setData(JSON.parse(GodownData));
-            return;
-          }
-          if (checkArr2 == true) {
-            arr2 = JSON.parse(GodownData);
-            setData(JSON.parse(GodownData));
-            return;
-          }
-          if (checkArr3 == true) {
-            arr3 = JSON.parse(GodownData);
-            setData(JSON.parse(GodownData));
-            return;
-          }
-          if (checkArr4 == true) {
-            arr4 = JSON.parse(GodownData);
-            setData(JSON.parse(GodownData));
-            return;
-          }
-        } else {
-         
-          // console.log('Array Length'+  arrL)
-          arr1 = Resp.Data.slice(0, arrLength);
-          arr2 = Resp.Data.slice(arrLength, arrLength2);
-          arr3 = Resp.Data.slice(arrLength2, arrLength3);
-          arr4 = Resp.Data.slice(arrLength3, arrLength4);
-          arr5 = Resp.Data.slice(arrLength4, Resp.Data.length);
-
-          setData(arr1);
-
+        // Restore unsaved scans of this same order onto the fresh data, so stock values stay current
+        // and every list is restored (saving only the open list duplicated items on submit).
+        let saved = null;
+        try {
+          saved = GodownData !== null ? JSON.parse(GodownData) : null;
+        } catch (e) {
+          saved = null;
         }
+        if (saved && saved.VchCode == VchCode && Array.isArray(saved.Data)) {
+          Resp.Data.forEach((item, i) => {
+            const savedItem = saved.Data[i];
+            if (!savedItem || savedItem.ItemCode != item.ItemCode) {
+              return;
+            }
+            item.ItemParamDT.forEach(row => {
+              const savedRow = savedItem.ItemParamDT.find(r => lineKey(item.ItemCode, r) === lineKey(item.ItemCode, row));
+              if (savedRow) {
+                row.TfrQty = savedRow.TfrQty;
+                row.ParamBCN = savedRow.ParamBCN;
+              }
+            });
+          });
+        } else if (GodownData !== null) {
+          DefaultPreference.clear('GodownData');
+        }
+
+        arr1 = Resp.Data.slice(0, arrLength);
+        arr2 = Resp.Data.slice(arrLength, arrLength2);
+        arr3 = Resp.Data.slice(arrLength2, arrLength3);
+        arr4 = Resp.Data.slice(arrLength3, arrLength4);
+        arr5 = Resp.Data.slice(arrLength4, Resp.Data.length);
+
+        setData(arr1);
+        setcheckArr1(true);
+        setcheckArr2(false);
+        setcheckArr3(false);
+        setcheckArr4(false);
+        setcheckArr5(false);
       })
 
     } else {
@@ -392,6 +417,21 @@ const PtWiseOrderInGUser = ({ navigation }) => {
 
 
   const callScanAPI = async (BaseURL, compCode, Fy, BCNVal) => {
+    // The same scan can fire twice (onEndEditing + focus effect); count it only once.
+    if (scansInFlight.current.has(BCNVal)) {
+      return;
+    }
+    scansInFlight.current.add(BCNVal);
+    try {
+      await processScan(BaseURL, compCode, Fy, BCNVal);
+    } catch (e) {
+      alert('Catch Error' + e);
+    } finally {
+      scansInFlight.current.delete(BCNVal);
+    }
+  }
+
+  const processScan = async (BaseURL, compCode, Fy, BCNVal) => {
     console.log(BaseURL + '/api/Values/SerachBCN?CompCode=' + compCode + '&FY=' + Fy + '&BCN=' + BCNVal)
     const res = await fetch(BaseURL + '/api/Values/SerachBCN?CompCode=' + compCode + '&FY=' + Fy + '&BCN=' + BCNVal)
     const response = await res.json();
@@ -406,7 +446,17 @@ const PtWiseOrderInGUser = ({ navigation }) => {
           item.Color.toUpperCase() == response.Color.toUpperCase() && item.Size == response.Size
         )
         if (checkColor !== undefined) {
-          TrfQty = checkColor.TfrQty + 1
+          // Prefer the stock returned with this scan (fresh) over the stock loaded with the order.
+          const scanStock = parseInt(response.Stock);
+          const stock = Number.isNaN(scanStock) ? rowStock(checkColor) : Math.max(0, scanStock);
+          if (enteredQty(lineKey(checkItemCode.ItemCode, checkColor)) + 1 > stock) {
+            alert(STOCK_ERROR);
+            setBcnVal('')
+            scanRef.current.focus();
+            DefaultPreference.clear('BCNdata')
+            return;
+          }
+          TrfQty = (parseInt(checkColor.TfrQty) || 0) + 1
           if (parseInt(checkColor.TfrQty) < parseInt(checkColor.Qty)) {
             checkColor.TfrQty = TrfQty;
             let obj = {
@@ -418,7 +468,7 @@ const PtWiseOrderInGUser = ({ navigation }) => {
             checkColor.ParamBCN.push(obj)
             onRefresh();
             setRefreshingVal(RefreshingVal + 1)
-            DefaultPreference.set('GodownData', JSON.stringify(Data))
+            DefaultPreference.set('GodownData', JSON.stringify({ VchCode: HeaderInfo.VchCode, Data: allItems() }))
             DefaultPreference.clear('BCNdata');
             setBcnVal('')
             scanRef.current.focus();
@@ -487,10 +537,62 @@ const PtWiseOrderInGUser = ({ navigation }) => {
     setQty(item.Qty)
     // setEditModal(true)
   }
+  // Re-check every product against fresh source godown stock just before posting.
+  // Returns an error message, or null when the transfer is valid.
+  const validateTransferStock = async () => {
+    const McCdoe = await DefaultPreference.get('McCode');
+    const res = await fetch(BaseURL + '/api/Values/GetOrderTransferItemDet?CompCode=' + CompCode + '&FY=' + Fy + '&VchCode=' + HeaderInfo.VchCode + '&IgrpCode=' + McCdoe)
+    const Resp = await res.json();
+    if (Resp.Status != 1) {
+      return Resp.Message || 'Could not verify stock. Please try again.';
+    }
+    const freshStock = {};
+    Resp.Data.forEach(item => {
+      item.ItemParamDT.forEach(row => {
+        freshStock[lineKey(item.ItemCode, row)] = rowStock(row);
+      });
+    });
+
+    const seen = {};
+    for (const item of allItems()) {
+      for (const row of item.ItemParamDT) {
+        const tfrQty = parseInt(row.TfrQty) || 0;
+        if (tfrQty > parseInt(row.Qty)) {
+          return item.ItemName + ' (' + row.Color + ' / ' + row.Size + '): Transfer qty must be less than qty';
+        }
+        const key = lineKey(item.ItemCode, row);
+        if (seen[key] || tfrQty <= 0) {
+          continue;
+        }
+        seen[key] = true;
+        const total = enteredQty(key);
+        const stock = freshStock[key] || 0;
+        if (total > stock) {
+          return item.ItemName + ' (' + row.Color + ' / ' + row.Size + '): ' + STOCK_ERROR
+            + '\nAvailable: ' + stock + ', Entered: ' + total;
+        }
+      }
+    }
+    return null;
+  }
+
   // ---------------------------------Transfer Save
   const ApprovalAPI = async () => {
+    // Ignore repeated taps while a transfer is already being posted.
+    if (submittingRef.current) {
+      return;
+    }
+    submittingRef.current = true;
+    try {
+      await saveTransfer();
+    } finally {
+      submittingRef.current = false;
+    }
+  }
+
+  const saveTransfer = async () => {
       let ItemDT = [];
-    MrgArr.map((item) => {
+    allItems().map((item) => {
 
       let obj1 = {}
       let ItemParamDT = []
@@ -527,6 +629,12 @@ const PtWiseOrderInGUser = ({ navigation }) => {
     if (ItemDT.length > 0) {
       setisLoading(true)
       try {
+        const stockError = await validateTransferStock();
+        if (stockError) {
+          setisLoading(false);
+          Alert.alert('Alert', stockError);
+          return;
+        }
         const response = await fetch(BaseURL + '/api/Values/SaveTransfer?CompCode=' + CompCode + '&FY=' + Fy, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -772,7 +880,6 @@ const PtWiseOrderInGUser = ({ navigation }) => {
           borderWidth: 1, borderColor: '#fff', width: '50%'
         }}
           onPress={() => {
-            setMrgArr([...arr1, ...arr2, ...arr3,...arr4,...arr5 ]);
             Alert.alert(
               "Do you want to transfer Order?",
               "",

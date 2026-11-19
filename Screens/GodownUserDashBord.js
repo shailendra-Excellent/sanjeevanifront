@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, useWindowDimensions, Modal, FlatList, Bac
 import { style } from "./style";
 import DefaultPreference from 'react-native-default-preference';
 import SearchBar from "react-native-dynamic-search-bar";
+import { filterByText, useDebouncedCallback } from './Components/useDebounce';
 import LinearGradient from 'react-native-linear-gradient';
 import moment from "moment";
 import { useIsFocused } from '@react-navigation/native';
@@ -133,25 +134,18 @@ const GodownUserDashBord = ({ navigation, route }) => {
 
   }
   // ---------------------------Search Function call
-  const searchFilterFunction = (text) => {
+  const searchFilterFunction = useDebouncedCallback((text) => {
     if (text) {
-
-      const newData = masterDataSource.filter(
-        function (item) {
-          const itemData = item.OrderNo
-            ? item.OrderNo.toUpperCase()
-            : ''.toUpperCase();
-          const textData = text.toUpperCase();
-          return itemData.indexOf(textData) > -1;
-        });
-      setData(newData);
-      setsearch(text);
+      setData(filterByText(masterDataSource, text, item => item.OrderNo));
     } else {
       // Inserted text is blank
       // Update FilteredDataSource with masterDataSource
       setData(masterDataSource);
-      setsearch(text);
     }
+  });
+  const onSearchChange = (text) => {
+    setsearch(text);
+    searchFilterFunction(text);
   };
   return <SafeAreaView style={{ flex: 1 }}>
     <View style={{ padding: 5, backgroundColor: '#000' }}>
@@ -177,8 +171,8 @@ const GodownUserDashBord = ({ navigation, route }) => {
             backgroundColor="#fff"
             placeholder="Search here.."
             textInputStyle={{ height: 40, margin: 10 }}
-            onChangeText={(text) => { searchFilterFunction(text) }}
-            onSearchPress={(text) => { searchFilterFunction(text) }}
+            onChangeText={onSearchChange}
+            onSearchPress={onSearchChange}
             // onPress={() => alert("onPress")}
             onClearPress={() => { setsearch('') }}
             value={search}

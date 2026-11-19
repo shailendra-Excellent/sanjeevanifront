@@ -58,6 +58,8 @@ const JantaGaliStockReport = () => {
   const [SizeWise, setSizeWise] = useState(true);
   const [ReportData, setReportData] = useState([]);
   const [checkSize, setCheckSize] = useState(true)
+  // Same as Stock Status report: 1 = Pending Stock only (AvailQtyOnly)
+  const [pendingStock, setPendingStock] = useState(0)
   useEffect(() => {
     DefaultPreference.get('BaseURL').then(function (BaseURL) {
       DefaultPreference.get('CompCode').then(function (compCode) {
@@ -96,14 +98,15 @@ const JantaGaliStockReport = () => {
     }
 
   }
-  const CallReportAPI = async (MasterType, Mastercode) => {
+  const CallReportAPI = async (MasterType, Mastercode, AvailQtyOnly = pendingStock) => {
     setIsloading(true);
     try {
       let mQty = parseInt(minQty) - 1
       let AsOnDate = moment(new Date()).format('DD/MMM/YYYY')
       setReportData([])
-      console.log(BaseURL + '/api/Values/GetSampleMCReqStockStatus?CompCode=' + CompCode + '&FY=' + FY + '&MasterCode=' + Mastercode + '&MasterType=' + MasterType + '&SDate=' + AsOnDate + '&MinQty=' + mQty)
-      const res = await fetch(BaseURL + '/api/Values/GetSampleMCReqStockStatus?CompCode=' + CompCode + '&FY=' + FY + '&MasterCode=' + Mastercode + '&MasterType=' + MasterType + '&SDate=' + AsOnDate + '&MinQty=' + mQty)
+      const url = BaseURL + '/api/Values/GetSampleMCReqStockStatus?CompCode=' + CompCode + '&FY=' + FY + '&MasterCode=' + Mastercode + '&MasterType=' + MasterType + '&SDate=' + AsOnDate + '&MinQty=' + mQty + '&AvailQtyOnly=' + AvailQtyOnly
+      console.log(url)
+      const res = await fetch(url)
       const response = await res.json();
       if (response.Status == 1) {
         setIsloading(false);
@@ -185,7 +188,7 @@ const JantaGaliStockReport = () => {
 
 
     <View style={{ paddingRight: 10, paddingLeft: 10 }}>
-      <CustomSearch data={Data} placeholder={'Search Item...'} setvalue={(item) => {
+      <CustomSearch wildSearch data={Data} placeholder={'Search Item...'} setvalue={(item) => {
         setIcode(item.Code)
         setIname(item.Name);
       }} setcrosValue={() => {
@@ -228,6 +231,22 @@ const JantaGaliStockReport = () => {
         <Text style={{ color: '#fff', fontWeight: '600', fontSize: 16 }}>Load</Text>
       </RNBounceable>
 
+    </View>
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 5 }}>
+      <Checkbox
+        color="#F39505"
+        uncheckedColor="#000"
+        status={pendingStock === 1 ? 'checked' : 'unchecked'}
+        onPress={() => {
+          const value = pendingStock === 1 ? 0 : 1
+          setPendingStock(value)
+          // Reload right away if a report is already loaded (like Stock Status)
+          if (Icode != 0 && minQty != '' && ReportData.length > 0) {
+            CallReportAPI(MAsterCode, Icode, value)
+          }
+        }}
+      />
+      <Text style={{ fontWeight: '700', fontSize: 16 }} >Pending Stock</Text>
     </View>
     <ScrollView horizontal={true}>
       <View>

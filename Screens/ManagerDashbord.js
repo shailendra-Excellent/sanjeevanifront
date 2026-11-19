@@ -12,6 +12,8 @@ import moment from "moment";
 import { ActivityIndicator } from "react-native";
 import RNBounceable from "@freakycoder/react-native-bounceable";
 import RNHTMLtoPDF from 'react-native-html-to-pdf';
+import { isPermitted, safeFileName, showShareError } from './Components/PdfUtils';
+import { filterByText, useDebouncedCallback } from './Components/useDebounce';
 import FileViewer from "react-native-file-viewer";
 let PDFTAmount = 0;
 let PDFTQty = 0;
@@ -67,25 +69,6 @@ const ManagerDashbord = ({ navigation, route }) => {
 
   }, [isFocused]);
 
-  const isPermitted = async () => {
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          {
-            title: 'External Storage Write Permission',
-            message: 'App needs access to Storage data',
-          },
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } catch (err) {
-        alert('Write permission err', err);
-        return false;
-      }
-    } else {
-      return true;
-    }
-  };
   // ----------------------Call API
   const CallAPI = useCallback(async (BaseUrl, compCode, Fy,HoldOrder) => {
 
@@ -238,7 +221,7 @@ const ManagerDashbord = ({ navigation, route }) => {
                   return (
                     `${ItemParamDT.Size + '/' + ItemParamDT.CQty}`
                   )
-                })
+                }).join(', ')
                 }
           </td>
           <td style="border: 1px solid black; text-align:right; font-size:12px;padding:5px">${item.Qty}</td>
@@ -275,7 +258,7 @@ ${IGRPData.map((IGRPObj) => {
 <td style="border: 1px solid black; text-align:right; font-size:12px;padding:5px">${IGRPObj.Qty}</td>
 </tr>`
         )
-      })}
+      }).join('')}
 
 </table>
 <table id= ${new Date()}  style="border-collapse: collapse;">
@@ -294,12 +277,19 @@ ${IGRPData.map((IGRPObj) => {
       let options = {
         //Content to print
         html: html,
-        fileName:item.SAccName,
+        fileName: safeFileName(item.SAccName),
         //File directory,
         directory: 'Documents',
       };
 
-      let file = await RNHTMLtoPDF.convert(options);
+      let file;
+      try {
+        file = await RNHTMLtoPDF.convert(options);
+      } catch (err) {
+        setisLoading(false);
+        Alert.alert('PDF Error', err.message || 'Failed to create PDF');
+        return;
+      }
       setisLoading(false);
       // openFile(file.filePath)
       Share.open({
@@ -314,7 +304,7 @@ ${IGRPData.map((IGRPObj) => {
         .catch((err) => {
           // navigation.goBack();
           setisLoading(false);
-          Alert.alert(err.message);
+          showShareError(err);
         });
     }
     const openFile = (filepath) => {
@@ -426,53 +416,30 @@ ${IGRPData.map((IGRPObj) => {
   }
 
   // ---------------------------Search Function call
-  const searchFilterFunction = (text) => {
+  const searchFilterFunction = useDebouncedCallback((text) => {
     if (showApprovedOrder == true) {
       if (text) {
-        const newData = masterDataSource.filter(
-          function (item) {
-            console.log('====================================');
-            console.log(item);
-            console.log('====================================');
-            const itemData = item.SAccName
-              ? item.SAccName.toUpperCase()
-              : ''.toUpperCase();
-            const textData = text.toUpperCase();
-            return itemData.indexOf(textData) > -1;
-          });
-        setUPDeta(newData);
-        setsearch(text);
+        setUPDeta(filterByText(masterDataSource, text, item => item.SAccName));
       } else {
         // Inserted text is blank
         // Update FilteredDataSource with masterDataSource
         setUPDeta(masterDataSource);
-        setsearch(text);
       }
     } else {
       if (text) {
-        const newData = masterDataSource1.filter(
-          function (item) {
-            console.log('==============tttt======================');
-            console.log(item);
-            console.log('====================================');
-            const itemData = item.SAccName
-              ? item.SAccName.toUpperCase()
-              : ''.toUpperCase();
-            const textData = text.toUpperCase();
-            return itemData.indexOf(textData) > -1;
-          });
-        // console.log(newData)
+        const newData = filterByText(masterDataSource1, text, item => item.SAccName);
         setData(newData);
         setUPDeta(newData);
-        setsearch(text);
       } else {
         // Inserted text is blank
         // Update FilteredDataSource with masterDataSource
         setData(FilterdData);
-        setsearch(text);
       }
     }
-
+  });
+  const onSearchChange = (text) => {
+    setsearch(text);
+    searchFilterFunction(text);
   };
   const onRefresh = () => {
     setRefreshing(true);
@@ -588,8 +555,8 @@ ${IGRPData.map((IGRPObj) => {
           style={{ height: 40, width: '100%' }}
           placeholder="Search here.."
           textInputStyle={{ height: 40, margin: 10 }}
-          onChangeText={(text) => { searchFilterFunction(text) }}
-          onSearchPress={(text) => { searchFilterFunction(text) }}
+          onChangeText={onSearchChange}
+          onSearchPress={onSearchChange}
           value={search}
         />
       </View>

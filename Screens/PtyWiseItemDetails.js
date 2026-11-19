@@ -8,6 +8,7 @@ import DefaultPreference from 'react-native-default-preference';
 import { style } from "./style";
 import moment from "moment/moment";
 import RNHTMLtoPDF from 'react-native-html-to-pdf';
+import { isPermitted, safeFileName, showShareError } from './Components/PdfUtils';
 import FileViewer from "react-native-file-viewer";
 import Share from 'react-native-share';
 import { Checkbox } from 'react-native-paper';
@@ -46,25 +47,6 @@ const PtyWiseItemDetails = ({ navigation, route }) => {
   const [DelevryDate, setDelevaryDate] = useState(moment(new Date()).format('DD/MMM/YYYY'));
   //  const [OrderNo, setOrderNo] = useState('');
   //  const [IGRPData,setIGRPData]= useState([])
-  const isPermitted = async () => {
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          {
-            title: 'External Storage Write Permission',
-            message: 'App needs access to Storage data',
-          },
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } catch (err) {
-        alert('Write permission err', err);
-        return false;
-      }
-    } else {
-      return true;
-    }
-  };
   const url = "https://awesome.contents.com/";
   const title = "Awesome Contents";
   // const message = "Please check this out.";
@@ -410,7 +392,7 @@ const PtyWiseItemDetails = ({ navigation, route }) => {
                   return (
                     `${ItemParamDT.Size + '/' + ItemParamDT.CQty}`
                   )
-                })
+                }).join(', ')
                 }
           </td>
           <td style="border: 1px solid black; text-align:right; font-size:12px;padding:5px">${item.Qty}</td>
@@ -447,7 +429,7 @@ ${IGRPData.map((IGRPObj) => {
 <td style="border: 1px solid black; text-align:right; font-size:12px;padding:5px">${IGRPObj.Qty}</td>
 </tr>`
         )
-      })}
+      }).join('')}
 
 </table>
 <table id= ${new Date()}  style="width:207px;border-collapse: collapse;">
@@ -468,12 +450,19 @@ ${IGRPData.map((IGRPObj) => {
       let options = {
         //Content to print
         html: html,
-        fileName: PartyInfo.SAccName,
+        fileName: safeFileName(PartyInfo.SAccName),
         //File directory,
         directory: 'docs',
       };
 
-      let file = await RNHTMLtoPDF.convert(options);
+      let file;
+      try {
+        file = await RNHTMLtoPDF.convert(options);
+      } catch (err) {
+        setisLoading(false);
+        Alert.alert('PDF Error', err.message || 'Failed to create PDF');
+        return;
+      }
       setisLoading(false)
       Share.open({
         title: "Order PDF",
@@ -487,8 +476,10 @@ ${IGRPData.map((IGRPObj) => {
         .catch((err) => {
           navigation.goBack();
           setisLoading(false);
-          Alert.alert(err.message);
+          showShareError(err);
         });
+    } else {
+      setisLoading(false);
     }
 
   };

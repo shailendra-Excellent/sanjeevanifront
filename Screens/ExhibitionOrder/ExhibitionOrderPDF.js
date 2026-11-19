@@ -2,27 +2,9 @@
 import React from 'react'
 import moment from 'moment';
 import RNHTMLtoPDF from 'react-native-html-to-pdf';
+import { isPermitted, safeFileName } from '../Components/PdfUtils';
 import { View, Text, ActivityIndicator, Modal, ScrollView, FlatList, StyleSheet, Image, PermissionsAndroid, RefreshControl, Platform, } from 'react-native';
 // const ExhibitionOrderPDF = () => {
-const isPermitted = async () => {
-  if (Platform.OS === 'android') {
-    try {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-        {
-          title: 'External Storage Write Permission',
-          message: 'App needs access to Storage data',
-        },
-      );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
-    } catch (err) {
-      alert('Write permission err', err);
-      return false;
-    }
-  } else {
-    return true;
-  }
-};
 export async function CreatePDF(Data,TotalWithRemark) {
 
 console.log('====================================');
@@ -58,7 +40,7 @@ console.log('====================================');
               `<td style="background-color:#000;color:#fff;border: 1px solid white;text-align: center;font-weight: bold;font-size:14px">${ItemParamDT.Size}</td>      
                     `
             )
-          })
+          }).join('')
           }
   </tr>
   <tr style="border: 1px solid white;"><td style="background-color:#000;color:#fff;border: 1px white;font-weight: bold;font-size:14px">Fair Order</td>
@@ -67,7 +49,7 @@ console.log('====================================');
               `<td style="background-color:#fff;color:#000;border: 1px solid white;text-align: center;font-size:12px;border: 1px solid black;">${ItemParamDT.Qty}</td>      
                     `
             )
-          })
+          }).join('')
           }
   </tr>
  <tr style="border: 1px solid white;"><td style="background-color:#000;color:#fff;border: 1px white;font-weight: bold;font-size:14px">Available Qty</td>
@@ -76,7 +58,7 @@ console.log('====================================');
               `<td style="background-color:#fff;color:#000;border: 1px solid white;text-align: center;font-size:12px;border: 1px solid black;">${ItemParamDT.Stock}</td>      
                     `
             )
-          })
+          }).join('')
           }
   </tr>
   <tr style="border: 1px solid white;"><td style="background-color:#000;color:#fff;border: 1px white;font-weight: bold;font-size:14px">Difference</td>
@@ -85,7 +67,7 @@ console.log('====================================');
               `<td style="background-color:#fff;color:#000;border: 1px solid white;text-align: center;font-size:12px;border: 1px solid black;font-weight: bold">${ItemParamDT.Diff}</td>      
                     `
             )
-          })
+          }).join('')
           }          
   </tr>
   ${
@@ -100,7 +82,7 @@ console.log('====================================');
                   ` <td style="background-color:#000;color:#fff;border: 1px solid white;text-align: center;font-weight: bold;font-size:14px">${ItemParamDT.Size}</td>    
                     `
                 )
-              })
+              }).join('')
               }
                   <tr style="border: 1px solid white;"><td style="background-color:#000;color:#fff;border: 1px white;font-weight: bold;font-size:14px">Qty</td>
    ${orderRender.Data.map((ItemParamDT) => {
@@ -109,13 +91,13 @@ console.log('====================================');
                   `<td style="background-color:#fff;color:#000;border: 1px solid white;text-align: center;font-size:12px;border: 1px solid black;">${ItemParamDT.Qty}</td>      
                     `
                 )
-              })
+              }).join('')
               }
                 
                     `
             )
 
-          })
+          }).join('')
 
           }
                 
@@ -132,7 +114,7 @@ console.log('====================================');
     let options = {
       //Content to print
       html: html,
-      fileName: global.Dep,
+      fileName: safeFileName(global.Dep),
       //File directory
       directory: 'docs',
     };
